@@ -485,6 +485,27 @@ async def test_status_zone_manual_activity_uses_config_setpoints_when_status_lag
 
 
 @pytest.mark.asyncio
+async def test_status_zone_manual_activity_uses_config_setpoints_without_current_activity(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Align stale set points when config is manual even without status activity."""
+    await _send_zone_config(data_updater)
+
+    await _send_zone_status(
+        data_updater,
+        {
+            "id": 1,
+            "hold": "on",
+            "htsp": 74,
+            "clsp": 78,
+        },
+    )
+
+    _assert_zone_setpoints(carrier_system, 65, 75)
+
+
+@pytest.mark.asyncio
 async def test_status_zone_manual_activity_preserves_legitimate_status_setpoints(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
@@ -542,7 +563,7 @@ async def test_status_zone_manual_activity_replay_is_single_use_after_correction
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
 ) -> None:
-    """Allow later real changes after one stale manual status replay is corrected.
+    """Keep replay armed until status actually catches up to manual values.
 
     Args:
         data_updater: Websocket updater under test.
@@ -561,7 +582,49 @@ async def test_status_zone_manual_activity_replay_is_single_use_after_correction
     _assert_zone_setpoints(carrier_system, 65, 75)
 
     await _send_zone_status(data_updater, stale_status)
+    _assert_zone_setpoints(carrier_system, 65, 75)
+
+    await _send_zone_status(
+        data_updater,
+        {
+            "id": 1,
+            "currentActivity": "manual",
+            "hold": "on",
+            "htsp": 65,
+            "clsp": 75,
+        },
+    )
+    _assert_zone_setpoints(carrier_system, 65, 75)
+
+    await _send_zone_status(data_updater, stale_status)
     _assert_zone_setpoints(carrier_system, 74, 78)
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_preserves_multiple_stale_pairs_across_updates(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Keep earlier stale pairs so later matching stale frames still align."""
+    await _send_zone_config(data_updater)
+
+    await _send_zone_status(
+        data_updater,
+        {"id": 1, "currentActivity": "manual", "hold": "on", "clsp": 79},
+    )
+    assert carrier_system.status.zones[0].cool_set_point == 79
+
+    await _send_zone_config(
+        data_updater,
+        heat_set_point=66,
+        cool_set_point=76,
+    )
+
+    await _send_zone_status(
+        data_updater,
+        {"id": 1, "currentActivity": "manual", "hold": "on", "htsp": 74, "clsp": 78},
+    )
+    _assert_zone_setpoints(carrier_system, 66, 76)
 
 
 @pytest.mark.asyncio
@@ -620,6 +683,71 @@ async def test_status_zone_manual_activity_with_incoming_hold_off_keeps_incoming
     assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.MANUAL
     assert carrier_system.status.zones[0].hold is False
     _assert_zone_setpoints(carrier_system, 74, 78)
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_invalid_config_clears_stale_replay_state(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Clear stale replay when a manual config payload has invalid set points."""
+    await _send_zone_config(data_updater)
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": "not-a-number",
+                                "clsp": 75,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    await _send_zone_status(
+        data_updater,
+        {
+            "id": 1,
+            "currentActivity": "manual",
+            "hold": "on",
+            "htsp": 74,
+            "clsp": 78,
+        },
+    )
+
+    _assert_zone_setpoints(carrier_system, 74, 78)
+
+
+@pytest.mark.asyncio
+async def test_infinity_config_with_missing_status_zone_keeps_updater_stable(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Handle config updates even when previous status is missing that zone."""
+    carrier_system.status.raw["zones"] = [
+        zone for zone in carrier_system.status.raw["zones"] if str(zone["id"]) != "1"
+    ]
+    carrier_system.status = Status(raw=carrier_system.status.raw)
+
+    status_zone_ids = [str(zone["id"]) for zone in carrier_system.status.raw["zones"]]
+
+    await _send_zone_config(data_updater)
+
+    assert [str(zone["id"]) for zone in carrier_system.status.raw["zones"]] == status_zone_ids
+    assert carrier_system.config.zones[0].hold_activity == ActivityTypes.MANUAL
 
 
 @pytest.mark.asyncio
