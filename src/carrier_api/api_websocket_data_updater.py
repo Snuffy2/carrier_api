@@ -60,22 +60,60 @@ def _align_manual_status_setpoints_with_config(system: System, zone: dict[str, A
     if manual_activity is None:
         return
 
-    if "htsp" in zone and float(zone["htsp"]) != manual_activity.heat_set_point:
-        _LOGGER.debug(
-            "Ignoring stale manual status heat set point for zone %s: %s != %s",
-            zone["id"],
-            zone["htsp"],
-            manual_activity.heat_set_point,
+    manual_activities = [
+        activity for activity in config_zone.activities if activity.type == ActivityTypes.MANUAL
+    ]
+    if len(manual_activities) < 2:
+        return
+
+    current_manual_activity = manual_activities[0]
+    stale_manual_activities = manual_activities[1:]
+
+    zone_heat_set_point = _float_set_point(zone.get("htsp")) if "htsp" in zone else None
+    zone_cool_set_point = _float_set_point(zone.get("clsp")) if "clsp" in zone else None
+
+    if any(
+        (
+            "htsp" not in zone
+            or (zone_heat_set_point is not None and activity.heat_set_point == zone_heat_set_point)
         )
-        zone["htsp"] = manual_activity.heat_set_point
-    if "clsp" in zone and float(zone["clsp"]) != manual_activity.cool_set_point:
-        _LOGGER.debug(
-            "Ignoring stale manual status cool set point for zone %s: %s != %s",
-            zone["id"],
-            zone["clsp"],
-            manual_activity.cool_set_point,
+        and (
+            "clsp" not in zone
+            or (zone_cool_set_point is not None and activity.cool_set_point == zone_cool_set_point)
         )
-        zone["clsp"] = manual_activity.cool_set_point
+        for activity in stale_manual_activities
+    ):
+        if "htsp" in zone and zone_heat_set_point != current_manual_activity.heat_set_point:
+            _LOGGER.debug(
+                "Ignoring stale manual status heat set point for zone %s: %s != %s",
+                zone["id"],
+                zone["htsp"],
+                current_manual_activity.heat_set_point,
+            )
+            zone["htsp"] = current_manual_activity.heat_set_point
+        if "clsp" in zone and zone_cool_set_point != current_manual_activity.cool_set_point:
+            _LOGGER.debug(
+                "Ignoring stale manual status cool set point for zone %s: %s != %s",
+                zone["id"],
+                zone["clsp"],
+                current_manual_activity.cool_set_point,
+            )
+            zone["clsp"] = current_manual_activity.cool_set_point
+
+
+def _float_set_point(value: Any) -> float | None:
+    """Convert a potential set point value into a float if valid.
+
+    Args:
+        value: Raw Carrier value for a heat/cool set point.
+
+    Returns:
+        The parsed float value, or ``None`` when conversion is not possible.
+    """
+    try:
+        return float(value)
+    except TypeError, ValueError:
+        return None
 
 
 class WebsocketDataUpdater:

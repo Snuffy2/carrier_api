@@ -9,6 +9,7 @@ import pytest
 from carrier_api import (
     ActivityTypes,
     Config,
+    ConfigZoneActivity,
     Energy,
     FanModes,
     Profile,
@@ -351,8 +352,21 @@ async def test_status_zone_manual_activity_uses_config_setpoints_when_status_lag
         data_updater: Websocket updater under test.
         carrier_system: Prepared system model that receives the update.
     """
-    manual_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.MANUAL)
+    manual_zone = carrier_system.config.zones[0]
+    manual_activity = manual_zone.find_activity(ActivityTypes.MANUAL)
     assert manual_activity is not None
+    manual_zone.activities.append(
+        ConfigZoneActivity(
+            {
+                "id": "1",
+                "zoneId": manual_zone.api_id,
+                "type": "manual",
+                "fan": "low",
+                "htsp": "65",
+                "clsp": "75",
+            }
+        )
+    )
 
     await data_updater.message_handler(
         json.dumps(
@@ -378,6 +392,84 @@ async def test_status_zone_manual_activity_uses_config_setpoints_when_status_lag
     reprocessed_status = Status(raw=carrier_system.status.raw)
     assert reprocessed_status.zones[0].heat_set_point == manual_activity.heat_set_point
     assert reprocessed_status.zones[0].cool_set_point == manual_activity.cool_set_point
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_preserves_legitimate_status_setpoints(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Keep manual status set points when they do not match stale duplicates."""
+    manual_zone = carrier_system.config.zones[0]
+    manual_zone.activities.append(
+        ConfigZoneActivity(
+            {
+                "id": "1",
+                "zoneId": manual_zone.api_id,
+                "type": "manual",
+                "fan": "low",
+                "htsp": "65",
+                "clsp": "75",
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": 74,
+                        "clsp": 79,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.MANUAL
+    assert carrier_system.status.zones[0].heat_set_point == 74
+    assert carrier_system.status.zones[0].cool_set_point == 79
+    reprocessed_status = Status(raw=carrier_system.status.raw)
+    assert reprocessed_status.zones[0].heat_set_point == 74
+    assert reprocessed_status.zones[0].cool_set_point == 79
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_with_malformed_setpoint_does_not_raise(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Ignore malformed manual set point payloads while preserving tolerant parsing."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": "not-a-number",
+                        "clsp": 79,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.MANUAL
+    assert carrier_system.status.zones[0].heat_set_point is None
+    assert carrier_system.status.zones[0].cool_set_point == 79
+    reprocessed_status = Status(raw=carrier_system.status.raw)
+    assert reprocessed_status.zones[0].heat_set_point is None
+    assert reprocessed_status.zones[0].cool_set_point == 79
 
 
 @pytest.mark.asyncio
