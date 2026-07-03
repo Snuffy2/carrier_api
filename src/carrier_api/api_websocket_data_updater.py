@@ -120,14 +120,14 @@ def _align_manual_status_setpoints_with_config(
     if stale_set_points is None:
         return False
     if incoming_has_setpoints:
-        if "htsp" in zone and incoming_heat_set_point is None:
+        if "htsp" not in zone or "clsp" not in zone:
             return False
-        if "clsp" in zone and incoming_cool_set_point is None:
+        if incoming_heat_set_point is None or incoming_cool_set_point is None:
             return False
         if not _matches_candidate_setpoints(
             candidates=stale_set_points,
-            heat_set_point=incoming_heat_set_point if "htsp" in zone else None,
-            cool_set_point=incoming_cool_set_point if "clsp" in zone else None,
+            heat_set_point=incoming_heat_set_point,
+            cool_set_point=incoming_cool_set_point,
         ):
             return False
     elif (raw_heat_set_point, raw_cool_set_point) not in stale_set_points:
@@ -270,6 +270,7 @@ def _drop_non_finite_setpoints(zone: dict[str, Any]) -> None:
         try:
             parsed = float(zone[key])
         except TypeError, ValueError:
+            zone.pop(key)
             continue
         if not isfinite(parsed):
             zone.pop(key)

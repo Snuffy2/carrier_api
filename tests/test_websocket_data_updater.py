@@ -587,7 +587,7 @@ async def test_status_zone_manual_activity_with_malformed_setpoint_does_not_rais
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
 ) -> None:
-    """Ignore malformed manual set point payloads while preserving tolerant parsing."""
+    """Ignore malformed manual set point payloads while preserving last good values."""
     await data_updater.message_handler(
         json.dumps(
             {
@@ -607,10 +607,10 @@ async def test_status_zone_manual_activity_with_malformed_setpoint_does_not_rais
     )
 
     assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.MANUAL
-    assert carrier_system.status.zones[0].heat_set_point is None
+    assert carrier_system.status.zones[0].heat_set_point == 74
     assert carrier_system.status.zones[0].cool_set_point == 79
     reprocessed_status = Status(raw=carrier_system.status.raw)
-    assert reprocessed_status.zones[0].heat_set_point is None
+    assert reprocessed_status.zones[0].heat_set_point == 74
     assert reprocessed_status.zones[0].cool_set_point == 79
 
 
@@ -926,11 +926,11 @@ async def test_status_zone_manual_activity_only_payload_realigns_already_manual_
 
 
 @pytest.mark.asyncio
-async def test_status_zone_manual_activity_partial_stale_replay_uses_config_setpoints(
+async def test_status_zone_manual_activity_partial_stale_replay_preserves_incoming_setpoints(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
 ) -> None:
-    """Apply config setpoints when a replay contains only one stale setpoint."""
+    """Preserve partial setpoint payloads because they can be live user changes."""
     await data_updater.message_handler(
         json.dumps(
             {
@@ -972,8 +972,8 @@ async def test_status_zone_manual_activity_partial_stale_replay_uses_config_setp
         )
     )
 
-    assert carrier_system.status.zones[0].heat_set_point == 65
-    assert carrier_system.status.zones[0].cool_set_point == 75
+    assert carrier_system.status.zones[0].heat_set_point == 74
+    assert carrier_system.status.zones[0].cool_set_point == 78
 
 
 @pytest.mark.asyncio
