@@ -895,6 +895,7 @@ async def test_status_zone_manual_activity_config_hold_off_clears_pre_status_rep
 @pytest.mark.parametrize(
     "manual_setpoints",
     [
+        (65, 75),
         (68, 78),
         (68, 75),
     ],

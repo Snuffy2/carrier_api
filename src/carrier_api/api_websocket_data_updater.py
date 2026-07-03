@@ -673,11 +673,4 @@ class WebsocketDataUpdater:
             self._manual_status_replay_candidates.pop(replay_key, None)
             return
 
-        if (
-            status_heat_set_point == manual_heat_set_point
-            and status_cool_set_point == manual_cool_set_point
-        ):
-            self._manual_status_replay_candidates.pop(replay_key, None)
-            return
-
         self._manual_status_replay_candidates[replay_key] = candidates
