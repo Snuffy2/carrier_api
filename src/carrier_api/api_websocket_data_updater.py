@@ -513,6 +513,8 @@ class WebsocketDataUpdater:
         config_set_points = self._manual_config_set_points(replay_key=replay_key)
         incoming_heat_set_point = _float_set_point(zone.get("htsp"))
         incoming_cool_set_point = _float_set_point(zone.get("clsp"))
+        if config_set_points[0] is None or config_set_points[1] is None:
+            return
         if ("htsp" in zone and incoming_heat_set_point is None) or (
             "clsp" in zone and incoming_cool_set_point is None
         ):
