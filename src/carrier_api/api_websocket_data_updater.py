@@ -300,6 +300,7 @@ class WebsocketDataUpdater:
         self.systems = systems
         self._manual_status_replay_candidates: dict[tuple[str, str], SetPointCandidates] = {}
         self._pre_setpoint_status_set_points: dict[tuple[str, str], SetPointPair] = {}
+        self._pre_malformed_status_set_points: dict[tuple[str, str], SetPointPair] = {}
 
     def carrier_system(self, serial_id: str) -> System:
         """Return the loaded system with the requested serial number.
@@ -357,19 +358,39 @@ class WebsocketDataUpdater:
                     )
                     stale_zone = find_by_id(system.status.raw["zones"], zone["id"])
                     previous_status_set_points = _raw_set_point_pair(stale_zone)
+                    incoming_setpoint_keys = {"htsp", "clsp"} & zone.keys()
+                    incoming_valid_setpoint_count = sum(
+                        set_point is not None
+                        for set_point in (
+                            incoming_heat_set_point,
+                            incoming_cool_set_point,
+                        )
+                    )
                     if (
                         previous_status_set_points is not None
-                        and ("htsp" in zone) != ("clsp" in zone)
-                        and (
-                            ("htsp" in zone and incoming_heat_set_point is not None)
-                            or ("clsp" in zone and incoming_cool_set_point is not None)
-                        )
+                        and len(incoming_setpoint_keys) == 1
+                        and incoming_valid_setpoint_count == 1
                     ):
                         self._pre_setpoint_status_set_points[replay_key] = (
                             previous_status_set_points
                         )
-                    elif incoming_had_full_setpoints:
+                    elif (
+                        previous_status_set_points is not None
+                        and len(incoming_setpoint_keys) == 2
+                        and incoming_valid_setpoint_count == 1
+                    ):
+                        self._pre_malformed_status_set_points[replay_key] = (
+                            previous_status_set_points
+                        )
+                    elif incoming_had_full_setpoints or (
+                        zone.get("hold") not in (None, "on")
+                        or (
+                            "currentActivity" in zone
+                            and zone["currentActivity"] != ActivityTypes.MANUAL.value
+                        )
+                    ):
                         self._pre_setpoint_status_set_points.pop(replay_key, None)
+                        self._pre_malformed_status_set_points.pop(replay_key, None)
                     aligned = _align_manual_status_setpoints_with_config(
                         system,
                         zone,
@@ -602,6 +623,9 @@ class WebsocketDataUpdater:
             or status_cool_set_point == manual_cool_set_point
         ):
             candidates.add(pre_setpoint_status_set_points)
+        pre_malformed_status_set_points = self._pre_malformed_status_set_points.get(replay_key)
+        if pre_malformed_status_set_points is not None:
+            candidates.add(pre_malformed_status_set_points)
         candidates.update(self._manual_status_replay_candidates.get(replay_key, set()))
         candidates.discard((manual_heat_set_point, manual_cool_set_point))
         if not candidates:
