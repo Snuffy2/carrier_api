@@ -353,12 +353,19 @@ class WebsocketDataUpdater:
                     incoming_had_full_setpoints = "htsp" in zone and "clsp" in zone
                     stale_zone = find_by_id(system.status.raw["zones"], zone["id"])
                     previous_status_set_points = _raw_set_point_pair(stale_zone)
-                    if previous_status_set_points is not None and ("htsp" in zone) != (
-                        "clsp" in zone
+                    if (
+                        previous_status_set_points is not None
+                        and ("htsp" in zone) != ("clsp" in zone)
+                        and (
+                            ("htsp" in zone and _float_set_point(zone.get("htsp")) is not None)
+                            or ("clsp" in zone and _float_set_point(zone.get("clsp")) is not None)
+                        )
                     ):
                         self._pre_setpoint_status_set_points[replay_key] = (
                             previous_status_set_points
                         )
+                    elif incoming_had_full_setpoints:
+                        self._pre_setpoint_status_set_points.pop(replay_key, None)
                     aligned = _align_manual_status_setpoints_with_config(
                         system,
                         zone,
