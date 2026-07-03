@@ -66,6 +66,10 @@ def _align_manual_status_setpoints_with_config(
         incoming_heat_set_point is not None and incoming_cool_set_point is not None
     )
     incoming_activity = _activity_type(zone.get("currentActivity"))
+    incoming_hold = zone.get("hold")
+    incoming_has_manual_indicator = (
+        incoming_activity is ActivityTypes.MANUAL or incoming_hold == "on"
+    )
     incoming_matches_stale_pair = (
         incoming_has_full_setpoints
         and stale_set_points is not None
@@ -83,13 +87,20 @@ def _align_manual_status_setpoints_with_config(
             or ("currentActivity" not in zone and zone.get("hold") == "on")
         )
     )
+    if "currentActivity" in zone and incoming_activity is not ActivityTypes.MANUAL:
+        return False
+    if (
+        incoming_has_full_setpoints
+        and incoming_matches_stale_pair
+        and not incoming_has_manual_indicator
+    ):
+        return False
 
     try:
         raw_status_zone = find_by_id(system.status.raw["zones"], zone["id"])
     except ValueError:
         return False
 
-    incoming_hold = zone.get("hold")
     raw_hold = raw_status_zone.get("hold")
     if incoming_hold is not None:
         if incoming_hold != "on":
@@ -108,7 +119,9 @@ def _align_manual_status_setpoints_with_config(
     if (
         not incoming_is_manual_transition
         and not _status_payload_is_manual(zone, raw_status_activity)
-        and not (incoming_matches_stale_pair and incoming_hold == "on")
+        and not (
+            incoming_matches_stale_pair and incoming_hold == "on" and "currentActivity" not in zone
+        )
     ):
         return False
 
@@ -612,7 +625,6 @@ class WebsocketDataUpdater:
         manual_heat_set_point = _float_set_point(manual_activity.get("htsp"))
         manual_cool_set_point = _float_set_point(manual_activity.get("clsp"))
         if manual_heat_set_point is None or manual_cool_set_point is None:
-            self._manual_status_replay_candidates.pop(replay_key, None)
             return
         if previous_manual_hold and previous_manual_set_points == (
             manual_heat_set_point,
