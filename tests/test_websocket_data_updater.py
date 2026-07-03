@@ -464,6 +464,27 @@ async def test_status_zone_manual_activity_preserves_legitimate_status_setpoints
     assert reprocessed_status.zones[0].heat_set_point == 79
     assert reprocessed_status.zones[0].cool_set_point == 81
 
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": 79,
+                        "clsp": 81,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].heat_set_point == 79
+    assert carrier_system.status.zones[0].cool_set_point == 81
+
 
 @pytest.mark.asyncio
 async def test_status_zone_manual_activity_with_malformed_setpoint_does_not_raise(
@@ -809,6 +830,26 @@ async def test_status_zone_manual_activity_transition_uses_config_setpoints_afte
     reprocessed_status = Status(raw=carrier_system.status.raw)
     assert reprocessed_status.zones[0].heat_set_point == 65
     assert reprocessed_status.zones[0].cool_set_point == 75
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "htsp": 74,
+                        "clsp": 78,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].heat_set_point == 65
+    assert carrier_system.status.zones[0].cool_set_point == 75
 
 
 @pytest.mark.asyncio
