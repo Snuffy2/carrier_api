@@ -404,6 +404,8 @@ class WebsocketDataUpdater:
                 zones = websocket_message_json.pop("zones", [])
                 for zone in zones:
                     _timestamp = zone.pop("timestamp", None)
+                    if "id" not in zone:
+                        continue
                     zone_id = str(zone["id"])
                     replay_key = (serial_id, zone_id)
                     incoming_heat_set_point = _float_set_point(zone.get("htsp"))
@@ -411,7 +413,10 @@ class WebsocketDataUpdater:
                     incoming_had_full_setpoints = (
                         incoming_heat_set_point is not None and incoming_cool_set_point is not None
                     )
-                    stale_zone = find_by_id(system.status.raw["zones"], zone["id"])
+                    try:
+                        stale_zone = find_by_id(system.status.raw["zones"], zone["id"])
+                    except ValueError:
+                        continue
                     previous_status_set_points = _raw_set_point_pair(stale_zone)
                     incoming_setpoint_keys = {"htsp", "clsp"} & zone.keys()
                     incoming_valid_setpoint_count = sum(

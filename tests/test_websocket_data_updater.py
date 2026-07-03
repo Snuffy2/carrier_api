@@ -344,6 +344,38 @@ async def test_status_zone_htsp_message_handler(
 
 
 @pytest.mark.asyncio
+async def test_status_zone_update_skips_missing_or_unknown_zone_id(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Skip invalid status zone fragments while applying the rest of the batch.
+
+    Args:
+        data_updater: Websocket updater under test.
+        carrier_system: Prepared system model that receives the update.
+    """
+    assert carrier_system.status.zones[0].humidity == 32
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {"rh": 99},
+                    {"id": "unknown-zone", "rh": 88},
+                    {"id": 1, "rh": 35},
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].humidity == 35
+    reprocessed_status = Status(raw=carrier_system.status.raw)
+    assert reprocessed_status.zones[0].humidity == 35
+
+
+@pytest.mark.asyncio
 async def test_status_zone_manual_activity_uses_config_setpoints_when_status_lags(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
