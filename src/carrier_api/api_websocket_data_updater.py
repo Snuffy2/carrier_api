@@ -163,6 +163,8 @@ def _align_manual_status_setpoints_with_config(
         return False
     if stale_set_points is None:
         return False
+    if not incoming_has_setpoints and not incoming_is_manual_transition:
+        return False
     if incoming_has_setpoints:
         if incoming_heat_set_point is None or incoming_cool_set_point is None:
             return False

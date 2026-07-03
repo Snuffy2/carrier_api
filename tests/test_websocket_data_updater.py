@@ -1959,6 +1959,58 @@ async def test_status_zone_manual_activity_indicatorless_full_replay_after_trans
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status_update",
+    [
+        {"id": 1},
+        {"id": 1, "rh": 34},
+    ],
+)
+async def test_status_zone_manual_activity_indicatorless_no_setpoint_update_preserves_status(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+    status_update: dict[str, Any],
+) -> None:
+    """Do not align unrelated no-setpoint frames with no incoming manual indicator."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": 65,
+                                "clsp": 75,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [status_update],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].heat_set_point == 74
+    assert carrier_system.status.zones[0].cool_set_point == 78
+
+
+@pytest.mark.asyncio
 async def test_status_zone_manual_activity_repeated_full_replay_keeps_candidate(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
