@@ -17,7 +17,7 @@ _LOGGER = getLogger(__name__)
 
 SetPointPair = tuple[float, float]
 MaybeSetPointPair = tuple[float | None, float | None]
-SetPointCandidates = set[SetPointPair]
+ManualReplay = tuple[SetPointPair, SetPointPair]
 
 
 def find_by_id(collection: list[dict], item_id: str) -> dict:
@@ -61,58 +61,28 @@ def _manual_activity(zone: dict[str, Any]) -> dict[str, Any] | None:
 def _align_manual_status_setpoints_with_config(
     system: System,
     zone: dict[str, Any],
-    stale_set_points: SetPointCandidates | None,
+    replay: ManualReplay | None,
 ) -> bool:
     """Replace stale manual status set points with matching config values.
 
     Args:
         system: Loaded Carrier system whose config contains activity profiles.
         zone: Incoming status zone payload to normalize before merging.
-        stale_set_points: Status set points observed before the manual config update.
+        replay: Stale status pair and replacement manual config pair.
 
     Returns:
         ``True`` when the incoming payload was aligned with config set points.
     """
-    if "id" not in zone:
+    if replay is None or "id" not in zone:
         return False
-    zone_id = str(zone["id"])
+    stale_set_points, manual_set_points = replay
     incoming_heat_set_point = _float_set_point(zone.get("htsp"))
     incoming_cool_set_point = _float_set_point(zone.get("clsp"))
-    incoming_has_setpoints = (
-        incoming_heat_set_point is not None or incoming_cool_set_point is not None
-    )
-    incoming_has_full_setpoints = (
-        incoming_heat_set_point is not None and incoming_cool_set_point is not None
-    )
     incoming_activity = _activity_type(zone.get("currentActivity"))
     incoming_hold = zone.get("hold")
-    incoming_has_manual_indicator = (
-        incoming_activity is ActivityTypes.MANUAL or incoming_hold == "on"
-    )
-    incoming_matches_stale_pair = (
-        incoming_has_full_setpoints
-        and stale_set_points is not None
-        and _matches_candidate_setpoints(
-            candidates=stale_set_points,
-            heat_set_point=incoming_heat_set_point,
-            cool_set_point=incoming_cool_set_point,
-        )
-    )
-    incoming_is_manual_transition = (
-        not incoming_has_setpoints
-        and stale_set_points is not None
-        and (
-            incoming_activity is ActivityTypes.MANUAL
-            or ("currentActivity" not in zone and zone.get("hold") == "on")
-        )
-    )
     if "currentActivity" in zone and incoming_activity is not ActivityTypes.MANUAL:
         return False
-    if (
-        incoming_has_full_setpoints
-        and incoming_matches_stale_pair
-        and not incoming_has_manual_indicator
-    ):
+    if incoming_hold not in (None, "on"):
         return False
 
     try:
@@ -120,103 +90,25 @@ def _align_manual_status_setpoints_with_config(
     except ValueError:
         return False
 
-    raw_hold = raw_status_zone.get("hold")
-    if incoming_hold is not None:
-        if incoming_hold != "on":
-            return False
-    elif (
-        raw_hold != "on"
-        and not incoming_is_manual_transition
-        and not (incoming_matches_stale_pair and incoming_activity is ActivityTypes.MANUAL)
-    ):
+    if not _status_payload_is_manual(zone, _activity_type(raw_status_zone.get("currentActivity"))):
         return False
 
-    raw_heat_set_point = _float_set_point(raw_status_zone.get("htsp"))
-    raw_cool_set_point = _float_set_point(raw_status_zone.get("clsp"))
-
-    raw_status_activity = _activity_type(raw_status_zone.get("currentActivity"))
-    if (
-        not incoming_is_manual_transition
-        and not _status_payload_is_manual(zone, raw_status_activity)
-        and not (
-            incoming_matches_stale_pair and incoming_hold == "on" and "currentActivity" not in zone
-        )
-    ):
+    incoming_pair = _raw_set_point_pair(zone)
+    if incoming_pair is not None and incoming_pair != stale_set_points:
         return False
 
-    if (
-        not incoming_has_setpoints
-        and raw_status_activity is ActivityTypes.MANUAL
-        and raw_hold == "on"
-        and stale_set_points is None
-    ):
+    if incoming_pair is None and _raw_set_point_pair(raw_status_zone) != stale_set_points:
         return False
 
-    try:
-        raw_config_zone = find_by_id(system.config.raw["zones"], zone["id"])
-    except ValueError:
-        return False
-    if raw_config_zone.get("hold") != "on" or raw_config_zone.get("holdActivity") != "manual":
-        return False
-
-    activities = raw_config_zone.get("activities")
-    if not isinstance(activities, list):
-        return False
-
-    manual_activity = _manual_activity(raw_config_zone)
-    if manual_activity is None:
-        return False
-
-    manual_heat_set_point = _float_set_point(manual_activity.get("htsp"))
-    manual_cool_set_point = _float_set_point(manual_activity.get("clsp"))
-    if manual_heat_set_point is None or manual_cool_set_point is None:
-        return False
-    if raw_heat_set_point is None or raw_cool_set_point is None:
-        return False
-    if stale_set_points is None:
-        return False
-    if not incoming_has_setpoints and not incoming_is_manual_transition:
-        return False
-    if incoming_has_setpoints:
-        if incoming_heat_set_point is None or incoming_cool_set_point is None:
-            return False
-        if not _matches_candidate_setpoints(
-            candidates=stale_set_points,
-            heat_set_point=incoming_heat_set_point,
-            cool_set_point=incoming_cool_set_point,
-        ):
-            return False
-    elif (raw_heat_set_point, raw_cool_set_point) not in stale_set_points:
-        return False
-    if (
-        not incoming_has_setpoints
-        and raw_heat_set_point == manual_heat_set_point
-        and raw_cool_set_point == manual_cool_set_point
-    ):
-        return False
-
-    zone["htsp"] = manual_heat_set_point
-    zone["clsp"] = manual_cool_set_point
-
-    if incoming_has_setpoints:
-        _LOGGER.debug(
-            "Replacing stale manual status set points for zone %s: raw=%s/%s, local=%s/%s",
-            zone_id,
-            incoming_heat_set_point,
-            incoming_cool_set_point,
-            zone["htsp"],
-            zone["clsp"],
-        )
-    else:
-        _LOGGER.debug(
-            "Replacing stale manual status set points for zone %s without explicit set points: "
-            "raw=%s/%s, local=%s/%s",
-            zone_id,
-            raw_heat_set_point,
-            raw_cool_set_point,
-            zone["htsp"],
-            zone["clsp"],
-        )
+    zone["htsp"], zone["clsp"] = manual_set_points
+    _LOGGER.debug(
+        "Replacing stale manual status set points for zone %s: raw=%s/%s, local=%s/%s",
+        zone["id"],
+        incoming_heat_set_point,
+        incoming_cool_set_point,
+        zone["htsp"],
+        zone["clsp"],
+    )
     return True
 
 
@@ -277,30 +169,6 @@ def _status_payload_is_manual(
     return raw_status_activity is ActivityTypes.MANUAL
 
 
-def _matches_candidate_setpoints(
-    candidates: SetPointCandidates,
-    heat_set_point: float | None = None,
-    cool_set_point: float | None = None,
-) -> bool:
-    """Return whether the provided set point values match any candidate pair.
-
-    Args:
-        candidates: Candidate heat/cool pairs eligible for stale replay correction.
-        heat_set_point: Optional heat set point to match.
-        cool_set_point: Optional cool set point to match.
-
-    Returns:
-        ``True`` when all provided values match at least one candidate pair.
-    """
-    for candidate_heat, candidate_cool in candidates:
-        if heat_set_point is not None and heat_set_point != candidate_heat:
-            continue
-        if cool_set_point is not None and cool_set_point != candidate_cool:
-            continue
-        return True
-    return False
-
-
 def _raw_set_point_pair(zone: dict[str, Any]) -> SetPointPair | None:
     """Return a finite heat/cool set point pair from a raw zone payload.
 
@@ -343,9 +211,7 @@ class WebsocketDataUpdater:
             systems: System objects previously loaded from the GraphQL API.
         """
         self.systems = systems
-        self._manual_status_replay_candidates: dict[tuple[str, str], SetPointCandidates] = {}
-        self._pre_setpoint_status_set_points: dict[tuple[str, str], SetPointCandidates] = {}
-        self._pre_malformed_status_set_points: dict[tuple[str, str], SetPointCandidates] = {}
+        self._manual_status_replays: dict[tuple[str, str], ManualReplay] = {}
 
     def carrier_system(self, serial_id: str) -> System:
         """Return the loaded system with the requested serial number.
@@ -370,9 +236,7 @@ class WebsocketDataUpdater:
         Args:
             replay_key: System serial and zone ID key for candidate tracking.
         """
-        self._manual_status_replay_candidates.pop(replay_key, None)
-        self._pre_setpoint_status_set_points.pop(replay_key, None)
-        self._pre_malformed_status_set_points.pop(replay_key, None)
+        self._manual_status_replays.pop(replay_key, None)
 
     async def message_handler(self, websocket_message: str) -> None:
         """Apply one raw Carrier websocket message to the matching system.
@@ -408,61 +272,18 @@ class WebsocketDataUpdater:
                         continue
                     zone_id = str(zone["id"])
                     replay_key = (serial_id, zone_id)
-                    incoming_heat_set_point = _float_set_point(zone.get("htsp"))
-                    incoming_cool_set_point = _float_set_point(zone.get("clsp"))
-                    incoming_had_full_setpoints = (
-                        incoming_heat_set_point is not None and incoming_cool_set_point is not None
-                    )
                     try:
                         stale_zone = find_by_id(system.status.raw["zones"], zone["id"])
                     except ValueError:
                         continue
-                    previous_status_set_points = _raw_set_point_pair(stale_zone)
-                    incoming_setpoint_keys = {"htsp", "clsp"} & zone.keys()
-                    incoming_valid_setpoint_count = sum(
-                        set_point is not None
-                        for set_point in (
-                            incoming_heat_set_point,
-                            incoming_cool_set_point,
-                        )
-                    )
-                    if (
-                        previous_status_set_points is not None
-                        and len(incoming_setpoint_keys) == 1
-                        and incoming_valid_setpoint_count == 1
-                    ):
-                        self._pre_setpoint_status_set_points.setdefault(replay_key, set()).add(
-                            previous_status_set_points
-                        )
-                    elif (
-                        previous_status_set_points is not None
-                        and len(incoming_setpoint_keys) == 2
-                        and incoming_valid_setpoint_count == 1
-                    ):
-                        self._pre_malformed_status_set_points.setdefault(replay_key, set()).add(
-                            previous_status_set_points
-                        )
-                    elif incoming_had_full_setpoints or (
-                        zone.get("hold") not in (None, "on")
-                        or (
-                            "currentActivity" in zone
-                            and zone["currentActivity"] != ActivityTypes.MANUAL.value
-                        )
-                    ):
-                        self._pre_setpoint_status_set_points.pop(replay_key, None)
-                        self._pre_malformed_status_set_points.pop(replay_key, None)
                     aligned = _align_manual_status_setpoints_with_config(
                         system,
                         zone,
-                        self._manual_status_replay_candidates.get(replay_key),
+                        self._manual_status_replays.get(replay_key),
                     )
-                    if not aligned:
-                        self._clear_manual_replay_candidate(
-                            replay_key=replay_key,
-                            zone=zone,
-                        )
-                        _drop_non_finite_setpoints(zone)
+                    _drop_non_finite_setpoints(zone)
                     always_merger.merge(stale_zone, zone)
+                    self._clear_manual_replay(replay_key, zone, aligned)
                 merged_status = always_merger.merge(system.status.raw, websocket_message_json)
                 merged_status.update({"utcTime": datetime.now(UTC).isoformat()})
                 system.status = Status(merged_status)
@@ -476,12 +297,8 @@ class WebsocketDataUpdater:
                     if "id" in zone:
                         zone_id = zone["id"]
                         stale_zone = find_by_id(system.config.raw["zones"], zone_id)
-                        previous_manual_set_points = self._manual_config_set_points_from_zone(
-                            stale_zone
-                        )
-                        previous_manual_hold = (
-                            stale_zone.get("hold") == "on"
-                            and stale_zone.get("holdActivity") == ActivityTypes.MANUAL.value
+                        previous_status_set_points = _raw_set_point_pair(
+                            find_by_id(system.status.raw["zones"], zone_id)
                         )
                         activities = zone.pop("activities", [])
                         for activity in activities:
@@ -494,105 +311,43 @@ class WebsocketDataUpdater:
                         always_merger.merge(stale_zone, zone)
                         self._update_manual_replay_candidate(
                             replay_key=(serial_id, str(zone_id)),
-                            system=system,
                             zone=stale_zone,
-                            previous_manual_set_points=previous_manual_set_points,
-                            previous_manual_hold=previous_manual_hold,
+                            previous_status_set_points=previous_status_set_points,
                         )
                 always_merger.merge(system.config.raw, websocket_message_json)
                 system.config = Config(system.config.raw)
             case _:
                 _LOGGER.error("Received unknown message: %s", websocket_message)
 
-    def _clear_manual_replay_candidate(
+    def _clear_manual_replay(
         self,
         replay_key: tuple[str, str],
         zone: dict[str, Any],
+        aligned: bool,
     ) -> None:
         """Clear stale manual replay tracking when incoming status proves it stale.
 
         Args:
             replay_key: System serial and zone ID key for candidate tracking.
             zone: Incoming status zone payload.
+            aligned: Whether the incoming payload was rewritten from replay state.
         """
-        candidates = self._manual_status_replay_candidates.get(replay_key)
-        if not candidates:
+        replay = self._manual_status_replays.get(replay_key)
+        if replay is None:
             return
 
+        _stale_pair, manual_pair = replay
+        if aligned or _raw_set_point_pair(zone) == manual_pair:
+            self._clear_replay_state(replay_key)
+            return
         if zone.get("hold") not in (None, "on"):
             self._clear_replay_state(replay_key)
             return
-
         if "currentActivity" in zone and zone["currentActivity"] != ActivityTypes.MANUAL.value:
             self._clear_replay_state(replay_key)
             return
-
-        config_set_points = self._manual_config_set_points(replay_key=replay_key)
-        incoming_heat_set_point = _float_set_point(zone.get("htsp"))
-        incoming_cool_set_point = _float_set_point(zone.get("clsp"))
-        if config_set_points[0] is None or config_set_points[1] is None:
-            return
-        if ("htsp" in zone and incoming_heat_set_point is None) or (
-            "clsp" in zone and incoming_cool_set_point is None
-        ):
-            return
-
         if "htsp" in zone and "clsp" in zone:
-            incoming_pair = (incoming_heat_set_point, incoming_cool_set_point)
-            if incoming_pair == config_set_points:
-                self._clear_replay_state(replay_key)
-                return
-            if incoming_pair not in candidates:
-                self._clear_replay_state(replay_key)
-            return
-
-        if "htsp" in zone:
-            if incoming_heat_set_point is None:
-                return
-            if (
-                not _matches_candidate_setpoints(
-                    candidates,
-                    heat_set_point=incoming_heat_set_point,
-                )
-                and incoming_heat_set_point != config_set_points[0]
-            ):
-                self._clear_replay_state(replay_key)
-                return
-
-        if "clsp" in zone:
-            if incoming_cool_set_point is None:
-                return
-            if (
-                not _matches_candidate_setpoints(
-                    candidates,
-                    cool_set_point=incoming_cool_set_point,
-                )
-                and incoming_cool_set_point != config_set_points[1]
-            ):
-                self._clear_replay_state(replay_key)
-                return
-
-    def _manual_config_set_points(
-        self,
-        replay_key: tuple[str, str],
-    ) -> MaybeSetPointPair:
-        """Return the config set points paired with a stale replay candidate.
-
-        Args:
-            replay_key: System serial and zone ID key for candidate tracking.
-
-        Returns:
-            Manual config heat and cool set points, or ``(None, None)`` when
-            config is unavailable.
-        """
-        serial_id, zone_id = replay_key
-        try:
-            system = self.carrier_system(serial_id=serial_id)
-            raw_config_zone = find_by_id(system.config.raw["zones"], zone_id)
-        except ValueError:
-            return (None, None)
-
-        return self._manual_config_set_points_from_zone(raw_config_zone)
+            self._clear_replay_state(replay_key)
 
     def _manual_config_set_points_from_zone(self, zone: dict[str, Any]) -> MaybeSetPointPair:
         """Return manual config heat/cool set points from a raw config zone.
@@ -616,19 +371,15 @@ class WebsocketDataUpdater:
     def _update_manual_replay_candidate(
         self,
         replay_key: tuple[str, str],
-        system: System,
         zone: dict[str, Any],
-        previous_manual_set_points: MaybeSetPointPair,
-        previous_manual_hold: bool,
+        previous_status_set_points: SetPointPair | None,
     ) -> None:
         """Track the status set points that can be replayed after manual config.
 
         Args:
             replay_key: System serial and zone ID key for candidate tracking.
-            system: Loaded Carrier system whose config contains activity profiles.
             zone: Merged raw config zone payload.
-            previous_manual_set_points: Manual set points before the config merge.
-            previous_manual_hold: Whether the zone was in manual hold before the merge.
+            previous_status_set_points: Status set points before the config merge.
         """
         if zone.get("hold") != "on" or zone.get("holdActivity") != ActivityTypes.MANUAL.value:
             self._clear_replay_state(replay_key)
@@ -643,37 +394,16 @@ class WebsocketDataUpdater:
         manual_cool_set_point = _float_set_point(manual_activity.get("clsp"))
         if manual_heat_set_point is None or manual_cool_set_point is None:
             return
-        if previous_manual_hold and previous_manual_set_points == (
-            manual_heat_set_point,
-            manual_cool_set_point,
-        ):
+        if previous_status_set_points is None:
+            self._clear_replay_state(replay_key)
             return
 
-        try:
-            raw_status_zone = find_by_id(system.status.raw["zones"], zone["id"])
-        except ValueError:
-            self._manual_status_replay_candidates.pop(replay_key, None)
+        manual_set_points = (manual_heat_set_point, manual_cool_set_point)
+        if previous_status_set_points == manual_set_points:
+            self._clear_replay_state(replay_key)
             return
 
-        status_heat_set_point = _float_set_point(raw_status_zone.get("htsp"))
-        status_cool_set_point = _float_set_point(raw_status_zone.get("clsp"))
-        if status_heat_set_point is None or status_cool_set_point is None:
-            self._manual_status_replay_candidates.pop(replay_key, None)
-            return
-
-        candidates = {
-            (status_heat_set_point, status_cool_set_point),
-        }
-        pre_setpoint_status_set_points = self._pre_setpoint_status_set_points.get(replay_key)
-        if pre_setpoint_status_set_points is not None:
-            candidates.update(pre_setpoint_status_set_points)
-        pre_malformed_status_set_points = self._pre_malformed_status_set_points.get(replay_key)
-        if pre_malformed_status_set_points is not None:
-            candidates.update(pre_malformed_status_set_points)
-        candidates.update(self._manual_status_replay_candidates.get(replay_key, set()))
-        candidates.discard((manual_heat_set_point, manual_cool_set_point))
-        if not candidates:
-            self._manual_status_replay_candidates.pop(replay_key, None)
-            return
-
-        self._manual_status_replay_candidates[replay_key] = candidates
+        self._manual_status_replays[replay_key] = (
+            previous_status_set_points,
+            manual_set_points,
+        )
