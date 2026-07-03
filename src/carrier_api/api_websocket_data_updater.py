@@ -77,20 +77,8 @@ def _align_manual_status_setpoints_with_config(
     raw_heat_set_point = _float_set_point(raw_status_zone.get("htsp"))
     raw_cool_set_point = _float_set_point(raw_status_zone.get("clsp"))
 
-    raw_activity = raw_status_zone.get("currentActivity")
-    try:
-        raw_status_activity = ActivityTypes(raw_activity)
-    except TypeError, ValueError:
-        raw_status_activity = None
-
-    incoming_activity = zone.get("currentActivity")
-    if incoming_activity is not None:
-        try:
-            if ActivityTypes(incoming_activity) is not ActivityTypes.MANUAL:
-                return False
-        except TypeError, ValueError:
-            return False
-    elif raw_status_activity is not ActivityTypes.MANUAL:
+    raw_status_activity = _activity_type(raw_status_zone.get("currentActivity"))
+    if not _status_payload_is_manual(zone, raw_status_activity):
         return False
 
     if (
@@ -132,6 +120,10 @@ def _align_manual_status_setpoints_with_config(
     if stale_set_points is None:
         return False
     if incoming_has_setpoints:
+        if "htsp" in zone and incoming_heat_set_point is None:
+            return False
+        if "clsp" in zone and incoming_cool_set_point is None:
+            return False
         if not _matches_candidate_setpoints(
             candidates=stale_set_points,
             heat_set_point=incoming_heat_set_point if "htsp" in zone else None,
@@ -190,6 +182,40 @@ def _float_set_point(value: Any) -> float | None:
         return None
 
     return parsed
+
+
+def _activity_type(value: Any) -> ActivityTypes | None:
+    """Return a Carrier activity type when the value is valid.
+
+    Args:
+        value: Raw Carrier activity value.
+
+    Returns:
+        Parsed activity type, or ``None`` when unavailable or invalid.
+    """
+    try:
+        return ActivityTypes(value)
+    except TypeError, ValueError:
+        return None
+
+
+def _status_payload_is_manual(
+    zone: dict[str, Any],
+    raw_status_activity: ActivityTypes | None,
+) -> bool:
+    """Return whether the incoming or current status activity is manual.
+
+    Args:
+        zone: Incoming status zone payload.
+        raw_status_activity: Current raw status activity before merging.
+
+    Returns:
+        ``True`` when the incoming payload or existing raw status is manual.
+    """
+    incoming_activity = zone.get("currentActivity")
+    if incoming_activity is not None:
+        return _activity_type(incoming_activity) is ActivityTypes.MANUAL
+    return raw_status_activity is ActivityTypes.MANUAL
 
 
 def _matches_candidate_setpoints(
@@ -424,6 +450,12 @@ class WebsocketDataUpdater:
                 and incoming_cool_set_point != config_set_points[1]
             ):
                 self._manual_status_replay_candidates.pop(replay_key, None)
+                return
+
+        incoming_heat_set_point = _float_set_point(zone.get("htsp"))
+        incoming_cool_set_point = _float_set_point(zone.get("clsp"))
+        if (incoming_heat_set_point, incoming_cool_set_point) == config_set_points:
+            self._manual_status_replay_candidates.pop(replay_key, None)
 
     def _manual_config_set_points(
         self,
