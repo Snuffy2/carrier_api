@@ -1595,6 +1595,58 @@ async def test_status_zone_manual_activity_transition_uses_config_setpoints_afte
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status_update",
+    [
+        {"id": 1, "currentActivity": "manual", "htsp": 74, "clsp": 78},
+        {"id": 1, "hold": "on", "htsp": 74, "clsp": 78},
+    ],
+)
+async def test_status_zone_manual_activity_one_sided_full_replay_uses_config_setpoints(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+    status_update: dict[str, Any],
+) -> None:
+    """Apply config setpoints for stale full frames with one manual indicator."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": 65,
+                                "clsp": 75,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [status_update],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].heat_set_point == 65
+    assert carrier_system.status.zones[0].cool_set_point == 75
+
+
+@pytest.mark.asyncio
 async def test_status_zone_manual_activity_repeated_full_replay_keeps_candidate(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,

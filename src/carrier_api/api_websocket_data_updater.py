@@ -62,7 +62,19 @@ def _align_manual_status_setpoints_with_config(
     incoming_has_setpoints = (
         incoming_heat_set_point is not None or incoming_cool_set_point is not None
     )
+    incoming_has_full_setpoints = (
+        incoming_heat_set_point is not None and incoming_cool_set_point is not None
+    )
     incoming_activity = _activity_type(zone.get("currentActivity"))
+    incoming_matches_stale_pair = (
+        incoming_has_full_setpoints
+        and stale_set_points is not None
+        and _matches_candidate_setpoints(
+            candidates=stale_set_points,
+            heat_set_point=incoming_heat_set_point,
+            cool_set_point=incoming_cool_set_point,
+        )
+    )
     incoming_is_manual_transition = (
         not incoming_has_setpoints
         and stale_set_points is not None
@@ -82,15 +94,21 @@ def _align_manual_status_setpoints_with_config(
     if incoming_hold is not None:
         if incoming_hold != "on":
             return False
-    elif raw_hold != "on" and not incoming_is_manual_transition:
+    elif (
+        raw_hold != "on"
+        and not incoming_is_manual_transition
+        and not (incoming_matches_stale_pair and incoming_activity is ActivityTypes.MANUAL)
+    ):
         return False
 
     raw_heat_set_point = _float_set_point(raw_status_zone.get("htsp"))
     raw_cool_set_point = _float_set_point(raw_status_zone.get("clsp"))
 
     raw_status_activity = _activity_type(raw_status_zone.get("currentActivity"))
-    if not incoming_is_manual_transition and not _status_payload_is_manual(
-        zone, raw_status_activity
+    if (
+        not incoming_is_manual_transition
+        and not _status_payload_is_manual(zone, raw_status_activity)
+        and not (incoming_matches_stale_pair and incoming_hold == "on")
     ):
         return False
 
