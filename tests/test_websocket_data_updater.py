@@ -601,6 +601,76 @@ async def test_status_zone_manual_activity_replay_is_single_use_after_correction
 
 
 @pytest.mark.asyncio
+async def test_status_zone_manual_activity_full_pair_matching_manual_setpoints_clears_replay_state(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Clear stale replay state when incoming status arrives at the active manual pair."""
+    replay_key = ("SERIALXXX", "1")
+    data_updater._manual_status_replays[replay_key] = (
+        [(74.0, 78.0), (65.0, 75.0)],
+        (65.0, 75.0),
+    )
+
+    await _send_zone_status(
+        data_updater,
+        {
+            "id": 1,
+            "currentActivity": "manual",
+            "hold": "on",
+            "htsp": 65,
+            "clsp": 75,
+        },
+    )
+
+    assert replay_key not in data_updater._manual_status_replays
+    _assert_zone_setpoints(carrier_system, 65, 75)
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_partial_status_disproves_replay_only_on_valid_side(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Keep replay when malformed one-side values arrive; clear it on a contradictory side."""
+    replay_key = ("SERIALXXX", "1")
+    data_updater._manual_status_replays[replay_key] = (
+        [(74.0, 78.0)],
+        (65.0, 75.0),
+    )
+
+    await _send_zone_status(
+        data_updater,
+        {
+            "id": 1,
+            "currentActivity": "manual",
+            "hold": "on",
+            "htsp": 73,
+        },
+    )
+    assert replay_key not in data_updater._manual_status_replays
+    _assert_zone_setpoints(carrier_system, 73, 78)
+
+    data_updater._manual_status_replays[replay_key] = (
+        [(74.0, 78.0)],
+        (65.0, 75.0),
+    )
+    await _send_zone_status(
+        data_updater,
+        {
+            "id": 1,
+            "currentActivity": "manual",
+            "hold": "on",
+            "htsp": "bad",
+            "clsp": 78,
+        },
+    )
+
+    assert replay_key in data_updater._manual_status_replays
+    _assert_zone_setpoints(carrier_system, 73, 78)
+
+
+@pytest.mark.asyncio
 async def test_status_zone_manual_activity_preserves_multiple_stale_pairs_across_updates(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
@@ -610,9 +680,9 @@ async def test_status_zone_manual_activity_preserves_multiple_stale_pairs_across
 
     await _send_zone_status(
         data_updater,
-        {"id": 1, "currentActivity": "manual", "hold": "on", "clsp": 79},
+        {"id": 1, "currentActivity": "manual", "hold": "on", "htsp": 74},
     )
-    assert carrier_system.status.zones[0].cool_set_point == 79
+    assert carrier_system.status.zones[0].cool_set_point == 78
 
     await _send_zone_config(
         data_updater,

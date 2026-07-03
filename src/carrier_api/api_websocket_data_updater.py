@@ -101,7 +101,7 @@ def _align_manual_status_setpoints_with_config(
 
     incoming_pair = _raw_set_point_pair(zone)
     if incoming_pair is not None:
-        if incoming_pair not in stale_set_points:
+        if incoming_pair == manual_set_points or incoming_pair not in stale_set_points:
             return False
     elif (
         "htsp" in zone
@@ -372,6 +372,24 @@ class WebsocketDataUpdater:
             return
         incoming_pair = _raw_set_point_pair(zone)
         if incoming_pair is None:
+            incoming_heat_set_point = _float_set_point(zone.get("htsp"))
+            incoming_cool_set_point = _float_set_point(zone.get("clsp"))
+            if incoming_heat_set_point is None and incoming_cool_set_point is None:
+                return
+            if all(
+                incoming_heat_set_point is not None
+                and incoming_heat_set_point != stale_heat_set_point
+                for stale_heat_set_point, _ in stale_set_points
+            ):
+                self._clear_replay_state(replay_key)
+                return
+            if all(
+                incoming_cool_set_point is not None
+                and incoming_cool_set_point != stale_cool_set_point
+                for _, stale_cool_set_point in stale_set_points
+            ):
+                self._clear_replay_state(replay_key)
+                return
             return
         if incoming_pair not in stale_set_points:
             self._clear_replay_state(replay_key)
