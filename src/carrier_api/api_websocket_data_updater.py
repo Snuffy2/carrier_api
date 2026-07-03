@@ -64,7 +64,10 @@ def _align_manual_status_setpoints_with_config(
     incoming_is_manual_transition = (
         not incoming_has_setpoints
         and stale_set_points is not None
-        and (incoming_activity is ActivityTypes.MANUAL or zone.get("hold") == "on")
+        and (
+            incoming_activity is ActivityTypes.MANUAL
+            or ("currentActivity" not in zone and zone.get("hold") == "on")
+        )
     )
 
     try:
@@ -593,6 +596,7 @@ class WebsocketDataUpdater:
             or status_cool_set_point == manual_cool_set_point
         ):
             candidates.add(pre_setpoint_status_set_points)
+        candidates.update(self._manual_status_replay_candidates.get(replay_key, set()))
         candidates.discard((manual_heat_set_point, manual_cool_set_point))
         if not candidates:
             self._manual_status_replay_candidates.pop(replay_key, None)
