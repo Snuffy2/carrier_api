@@ -60,6 +60,12 @@ def _align_manual_status_setpoints_with_config(
     incoming_heat_set_point = _float_set_point(zone.get("htsp"))
     incoming_cool_set_point = _float_set_point(zone.get("clsp"))
     incoming_has_setpoints = "htsp" in zone or "clsp" in zone
+    incoming_activity = _activity_type(zone.get("currentActivity"))
+    incoming_is_manual_transition = (
+        not incoming_has_setpoints
+        and stale_set_points is not None
+        and (incoming_activity is ActivityTypes.MANUAL or zone.get("hold") == "on")
+    )
 
     try:
         raw_status_zone = find_by_id(system.status.raw["zones"], zone["id"])
@@ -71,14 +77,16 @@ def _align_manual_status_setpoints_with_config(
     if incoming_hold is not None:
         if incoming_hold != "on":
             return False
-    elif raw_hold != "on":
+    elif raw_hold != "on" and not incoming_is_manual_transition:
         return False
 
     raw_heat_set_point = _float_set_point(raw_status_zone.get("htsp"))
     raw_cool_set_point = _float_set_point(raw_status_zone.get("clsp"))
 
     raw_status_activity = _activity_type(raw_status_zone.get("currentActivity"))
-    if not _status_payload_is_manual(zone, raw_status_activity):
+    if not incoming_is_manual_transition and not _status_payload_is_manual(
+        zone, raw_status_activity
+    ):
         return False
 
     if (

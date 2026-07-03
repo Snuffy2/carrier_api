@@ -926,6 +926,58 @@ async def test_status_zone_manual_activity_only_payload_realigns_already_manual_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "zone_update",
+    [
+        {"id": 1, "currentActivity": "manual"},
+        {"id": 1, "hold": "on"},
+    ],
+)
+async def test_status_zone_manual_activity_one_sided_transition_uses_config_setpoints(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+    zone_update: dict[str, Any],
+) -> None:
+    """Apply config setpoints when a no-setpoint status frame starts manual hold."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": 65,
+                                "clsp": 75,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [zone_update],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].heat_set_point == 65
+    assert carrier_system.status.zones[0].cool_set_point == 75
+
+
+@pytest.mark.asyncio
 async def test_status_zone_manual_activity_partial_stale_replay_preserves_incoming_setpoints(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
