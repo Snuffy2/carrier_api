@@ -39,6 +39,25 @@ def find_by_id(collection: list[dict], item_id: str) -> dict:
     raise ValueError(f"id: {item_id} not found in collection")
 
 
+def _manual_activity(zone: dict[str, Any]) -> dict[str, Any] | None:
+    """Return the manual activity payload from a raw config zone.
+
+    Args:
+        zone: Raw config zone payload containing activity definitions.
+
+    Returns:
+        The matching manual activity payload, or ``None`` when unavailable.
+    """
+    return next(
+        (
+            activity
+            for activity in zone.get("activities", [])
+            if str(activity.get("type")) == ActivityTypes.MANUAL.value
+        ),
+        None,
+    )
+
+
 def _align_manual_status_setpoints_with_config(
     system: System,
     zone: dict[str, Any],
@@ -144,14 +163,7 @@ def _align_manual_status_setpoints_with_config(
     if not isinstance(activities, list):
         return False
 
-    manual_activity = next(
-        (
-            activity
-            for activity in activities
-            if str(activity.get("type")) == ActivityTypes.MANUAL.value
-        ),
-        None,
-    )
+    manual_activity = _manual_activity(raw_config_zone)
     if manual_activity is None:
         return False
 
@@ -587,14 +599,7 @@ class WebsocketDataUpdater:
             Manual config heat and cool set points, or ``(None, None)`` when
             unavailable.
         """
-        manual_activity = next(
-            (
-                activity
-                for activity in zone.get("activities", [])
-                if str(activity.get("type")) == ActivityTypes.MANUAL.value
-            ),
-            None,
-        )
+        manual_activity = _manual_activity(zone)
         if manual_activity is None:
             return (None, None)
 
@@ -624,14 +629,7 @@ class WebsocketDataUpdater:
             self._clear_replay_state(replay_key)
             return
 
-        manual_activity = next(
-            (
-                activity
-                for activity in zone.get("activities", [])
-                if str(activity.get("type")) == ActivityTypes.MANUAL.value
-            ),
-            None,
-        )
+        manual_activity = _manual_activity(zone)
         if manual_activity is None:
             self._clear_replay_state(replay_key)
             return
