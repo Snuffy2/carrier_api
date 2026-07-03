@@ -41,17 +41,24 @@ def _align_manual_status_setpoints_with_config(system: System, zone: dict[str, A
         system: Loaded Carrier system whose config contains activity profiles.
         zone: Incoming status zone payload to normalize before merging.
     """
-    if zone.get("currentActivity") != ActivityTypes.MANUAL.value:
+    if "id" not in zone:
         return
-    if "htsp" not in zone or "clsp" not in zone:
+    zone_id = str(zone["id"])
+
+    incoming_heat_set_point = _float_set_point(zone.get("htsp"))
+    incoming_cool_set_point = _float_set_point(zone.get("clsp"))
+    if incoming_heat_set_point is None or incoming_cool_set_point is None:
+        return
+
+    status_zone = next(
+        (s for s in system.status.zones if s.api_id == zone_id),
+        None,
+    )
+    if status_zone is None:
         return
 
     config_zone = next(
-        (
-            config_zone
-            for config_zone in system.config.zones
-            if config_zone.api_id == str(zone["id"])
-        ),
+        (config_zone for config_zone in system.config.zones if config_zone.api_id == zone_id),
         None,
     )
     if config_zone is None:
@@ -59,42 +66,59 @@ def _align_manual_status_setpoints_with_config(system: System, zone: dict[str, A
     manual_activity = config_zone.find_activity(ActivityTypes.MANUAL)
     if manual_activity is None:
         return
-
-    manual_activities = [
-        activity for activity in config_zone.activities if activity.type == ActivityTypes.MANUAL
-    ]
-    if len(manual_activities) < 2:
+    if zone.get("currentActivity") is not None:
+        try:
+            if ActivityTypes(zone["currentActivity"]) is not ActivityTypes.MANUAL:
+                return
+        except ValueError:
+            return
+    elif status_zone.current_status_activity_type is not ActivityTypes.MANUAL:
         return
 
-    current_manual_activity = manual_activities[0]
-    stale_manual_activities = manual_activities[1:]
-
-    zone_heat_set_point = _float_set_point(zone.get("htsp"))
-    zone_cool_set_point = _float_set_point(zone.get("clsp"))
-    if zone_heat_set_point is None or zone_cool_set_point is None:
+    try:
+        raw_status_zone = find_by_id(system.status.raw["zones"], zone["id"])
+    except ValueError:
         return
 
-    if any(
-        activity.heat_set_point == zone_heat_set_point
-        and activity.cool_set_point == zone_cool_set_point
-        for activity in stale_manual_activities
+    raw_heat_set_point = _float_set_point(raw_status_zone.get("htsp"))
+    raw_cool_set_point = _float_set_point(raw_status_zone.get("clsp"))
+    if raw_heat_set_point is None or raw_cool_set_point is None:
+        return
+
+    if (
+        incoming_heat_set_point != raw_heat_set_point
+        or incoming_cool_set_point != raw_cool_set_point
     ):
-        if zone_heat_set_point != current_manual_activity.heat_set_point:
-            _LOGGER.debug(
-                "Ignoring stale manual status heat set point for zone %s: %s != %s",
-                zone["id"],
-                zone["htsp"],
-                current_manual_activity.heat_set_point,
-            )
-            zone["htsp"] = current_manual_activity.heat_set_point
-        if zone_cool_set_point != current_manual_activity.cool_set_point:
-            _LOGGER.debug(
-                "Ignoring stale manual status cool set point for zone %s: %s != %s",
-                zone["id"],
-                zone["clsp"],
-                current_manual_activity.cool_set_point,
-            )
-            zone["clsp"] = current_manual_activity.cool_set_point
+        return
+
+    status_heat_set_point = _float_set_point(status_zone.heat_set_point)
+    status_cool_set_point = _float_set_point(status_zone.cool_set_point)
+    if status_heat_set_point is None or status_cool_set_point is None:
+        return
+    manual_heat_set_point = _float_set_point(manual_activity.heat_set_point)
+    manual_cool_set_point = _float_set_point(manual_activity.cool_set_point)
+    if manual_heat_set_point is None or manual_cool_set_point is None:
+        return
+
+    if (
+        status_heat_set_point != manual_heat_set_point
+        or status_cool_set_point != manual_cool_set_point
+    ):
+        return
+    if status_heat_set_point == raw_heat_set_point and status_cool_set_point == raw_cool_set_point:
+        return
+
+    zone["htsp"] = manual_heat_set_point
+    zone["clsp"] = manual_cool_set_point
+
+    _LOGGER.debug(
+        "Replacing stale manual status set points for zone %s: raw=%s/%s, local=%s/%s",
+        zone_id,
+        incoming_heat_set_point,
+        incoming_cool_set_point,
+        zone["htsp"],
+        zone["clsp"],
+    )
 
 
 def _float_set_point(value: Any) -> float | None:

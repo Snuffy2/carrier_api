@@ -9,7 +9,6 @@ import pytest
 from carrier_api import (
     ActivityTypes,
     Config,
-    ConfigZoneActivity,
     Energy,
     FanModes,
     Profile,
@@ -355,64 +354,12 @@ async def test_status_zone_manual_activity_uses_config_setpoints_when_status_lag
     manual_zone = carrier_system.config.zones[0]
     manual_activity = manual_zone.find_activity(ActivityTypes.MANUAL)
     assert manual_activity is not None
-    manual_zone.activities.append(
-        ConfigZoneActivity(
-            {
-                "id": "1",
-                "zoneId": manual_zone.api_id,
-                "type": "manual",
-                "fan": "low",
-                "htsp": "65",
-                "clsp": "75",
-            }
-        )
-    )
-
-    await data_updater.message_handler(
-        json.dumps(
-            {
-                "messageType": "InfinityStatus",
-                "deviceId": "SERIALXXX",
-                "zones": [
-                    {
-                        "id": 1,
-                        "currentActivity": "manual",
-                        "hold": "on",
-                        "htsp": 65,
-                        "clsp": 75,
-                    }
-                ],
-            }
-        )
-    )
-
-    assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.MANUAL
-    assert carrier_system.status.zones[0].heat_set_point == manual_activity.heat_set_point
-    assert carrier_system.status.zones[0].cool_set_point == manual_activity.cool_set_point
-    reprocessed_status = Status(raw=carrier_system.status.raw)
-    assert reprocessed_status.zones[0].heat_set_point == manual_activity.heat_set_point
-    assert reprocessed_status.zones[0].cool_set_point == manual_activity.cool_set_point
-
-
-@pytest.mark.asyncio
-async def test_status_zone_manual_activity_preserves_legitimate_status_setpoints(
-    data_updater: WebsocketDataUpdater,
-    carrier_system: System,
-) -> None:
-    """Keep manual status set points when they do not match stale duplicates."""
-    manual_zone = carrier_system.config.zones[0]
-    manual_zone.activities.append(
-        ConfigZoneActivity(
-            {
-                "id": "1",
-                "zoneId": manual_zone.api_id,
-                "type": "manual",
-                "fan": "low",
-                "htsp": "65",
-                "clsp": "75",
-            }
-        )
-    )
+    status_zone = carrier_system.status.zones[0]
+    manual_activity.heat_set_point = 65
+    manual_activity.cool_set_point = 75
+    status_zone.current_status_activity_type = ActivityTypes.MANUAL
+    status_zone.heat_set_point = 65
+    status_zone.cool_set_point = 75
 
     await data_updater.message_handler(
         json.dumps(
@@ -425,7 +372,47 @@ async def test_status_zone_manual_activity_preserves_legitimate_status_setpoints
                         "currentActivity": "manual",
                         "hold": "on",
                         "htsp": 74,
-                        "clsp": 79,
+                        "clsp": 78,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].heat_set_point == manual_activity.heat_set_point
+    assert carrier_system.status.zones[0].cool_set_point == manual_activity.cool_set_point
+    reprocessed_status = Status(raw=carrier_system.status.raw)
+    assert reprocessed_status.zones[0].heat_set_point == manual_activity.heat_set_point
+    assert reprocessed_status.zones[0].cool_set_point == manual_activity.cool_set_point
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_preserves_legitimate_status_setpoints(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Keep manual status set points when status and config do not both agree."""
+    manual_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.MANUAL)
+    assert manual_activity is not None
+    status_zone = carrier_system.status.zones[0]
+    manual_activity.heat_set_point = 65
+    manual_activity.cool_set_point = 75
+    status_zone.current_status_activity_type = ActivityTypes.MANUAL
+    status_zone.heat_set_point = 74
+    status_zone.cool_set_point = 78
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": 74,
+                        "clsp": 78,
                     }
                 ],
             }
@@ -434,10 +421,10 @@ async def test_status_zone_manual_activity_preserves_legitimate_status_setpoints
 
     assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.MANUAL
     assert carrier_system.status.zones[0].heat_set_point == 74
-    assert carrier_system.status.zones[0].cool_set_point == 79
+    assert carrier_system.status.zones[0].cool_set_point == 78
     reprocessed_status = Status(raw=carrier_system.status.raw)
     assert reprocessed_status.zones[0].heat_set_point == 74
-    assert reprocessed_status.zones[0].cool_set_point == 79
+    assert reprocessed_status.zones[0].cool_set_point == 78
 
 
 @pytest.mark.asyncio
@@ -477,20 +464,7 @@ async def test_status_zone_manual_activity_partial_payload_with_htsp_only_preser
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
 ) -> None:
-    """Ignore partial manual status updates that only match stale duplicate heat set point."""
-    manual_zone = carrier_system.config.zones[0]
-    manual_zone.activities.append(
-        ConfigZoneActivity(
-            {
-                "id": "1",
-                "zoneId": manual_zone.api_id,
-                "type": "manual",
-                "fan": "low",
-                "htsp": "65",
-                "clsp": "75",
-            }
-        )
-    )
+    """Ignore partial manual status updates when set points are partial."""
     assert carrier_system.status.zones[0].heat_set_point == 74
 
     await data_updater.message_handler(
@@ -516,6 +490,45 @@ async def test_status_zone_manual_activity_partial_payload_with_htsp_only_preser
     reprocessed_status = Status(raw=carrier_system.status.raw)
     assert reprocessed_status.zones[0].heat_set_point == 65
     assert reprocessed_status.zones[0].cool_set_point == 78
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_setpoint_only_payload_uses_optimistic_setpoints(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Replace stale set-point-only payloads only when status and config agree."""
+    manual_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.MANUAL)
+    assert manual_activity is not None
+    status_zone = carrier_system.status.zones[0]
+    manual_activity.heat_set_point = 65
+    manual_activity.cool_set_point = 75
+    status_zone.current_status_activity_type = ActivityTypes.MANUAL
+    status_zone.heat_set_point = 65
+    status_zone.cool_set_point = 75
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "htsp": 74,
+                        "clsp": 78,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].heat_set_point == manual_activity.heat_set_point
+    assert carrier_system.status.zones[0].cool_set_point == manual_activity.cool_set_point
+    reprocessed_status = Status(raw=carrier_system.status.raw)
+    assert reprocessed_status.zones[0].heat_set_point == manual_activity.heat_set_point
+    assert reprocessed_status.zones[0].cool_set_point == manual_activity.cool_set_point
 
 
 @pytest.mark.asyncio
