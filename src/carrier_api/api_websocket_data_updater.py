@@ -100,6 +100,7 @@ def _align_manual_status_setpoints_with_config(
         not incoming_has_setpoints
         and raw_status_activity is ActivityTypes.MANUAL
         and raw_hold == "on"
+        and stale_set_points is None
     ):
         return False
 
@@ -321,12 +322,16 @@ class WebsocketDataUpdater:
             self._manual_status_replay_candidates.pop(replay_key, None)
             return
 
-        incoming_heat_set_point = _float_set_point(zone.get("htsp"))
-        incoming_cool_set_point = _float_set_point(zone.get("clsp"))
-        if incoming_heat_set_point is None or incoming_cool_set_point is None:
-            return
-        if (incoming_heat_set_point, incoming_cool_set_point) != candidate:
-            self._manual_status_replay_candidates.pop(replay_key, None)
+        if "htsp" in zone:
+            incoming_heat_set_point = _float_set_point(zone.get("htsp"))
+            if incoming_heat_set_point is None or incoming_heat_set_point != candidate[0]:
+                self._manual_status_replay_candidates.pop(replay_key, None)
+                return
+
+        if "clsp" in zone:
+            incoming_cool_set_point = _float_set_point(zone.get("clsp"))
+            if incoming_cool_set_point is None or incoming_cool_set_point != candidate[1]:
+                self._manual_status_replay_candidates.pop(replay_key, None)
 
     def _update_manual_replay_candidate(
         self,
