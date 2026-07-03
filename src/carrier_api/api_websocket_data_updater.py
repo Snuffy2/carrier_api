@@ -330,8 +330,8 @@ class WebsocketDataUpdater:
         """
         self.systems = systems
         self._manual_status_replay_candidates: dict[tuple[str, str], SetPointCandidates] = {}
-        self._pre_setpoint_status_set_points: dict[tuple[str, str], SetPointPair] = {}
-        self._pre_malformed_status_set_points: dict[tuple[str, str], SetPointPair] = {}
+        self._pre_setpoint_status_set_points: dict[tuple[str, str], SetPointCandidates] = {}
+        self._pre_malformed_status_set_points: dict[tuple[str, str], SetPointCandidates] = {}
 
     def carrier_system(self, serial_id: str) -> System:
         """Return the loaded system with the requested serial number.
@@ -412,7 +412,7 @@ class WebsocketDataUpdater:
                         and len(incoming_setpoint_keys) == 1
                         and incoming_valid_setpoint_count == 1
                     ):
-                        self._pre_setpoint_status_set_points[replay_key] = (
+                        self._pre_setpoint_status_set_points.setdefault(replay_key, set()).add(
                             previous_status_set_points
                         )
                     elif (
@@ -420,7 +420,7 @@ class WebsocketDataUpdater:
                         and len(incoming_setpoint_keys) == 2
                         and incoming_valid_setpoint_count == 1
                     ):
-                        self._pre_malformed_status_set_points[replay_key] = (
+                        self._pre_malformed_status_set_points.setdefault(replay_key, set()).add(
                             previous_status_set_points
                         )
                     elif incoming_had_full_setpoints or (
@@ -662,10 +662,10 @@ class WebsocketDataUpdater:
             status_heat_set_point == manual_heat_set_point
             or status_cool_set_point == manual_cool_set_point
         ):
-            candidates.add(pre_setpoint_status_set_points)
+            candidates.update(pre_setpoint_status_set_points)
         pre_malformed_status_set_points = self._pre_malformed_status_set_points.get(replay_key)
         if pre_malformed_status_set_points is not None:
-            candidates.add(pre_malformed_status_set_points)
+            candidates.update(pre_malformed_status_set_points)
         candidates.update(self._manual_status_replay_candidates.get(replay_key, set()))
         candidates.discard((manual_heat_set_point, manual_cool_set_point))
         if not candidates:
