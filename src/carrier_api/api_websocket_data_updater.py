@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 from json import loads
 from logging import getLogger
+from math import isfinite
 from typing import Any
 
 from deepmerge import always_merger
@@ -46,8 +47,7 @@ def _align_manual_status_setpoints_with_config(system: System, zone: dict[str, A
     zone_id = str(zone["id"])
     incoming_heat_set_point = _float_set_point(zone.get("htsp"))
     incoming_cool_set_point = _float_set_point(zone.get("clsp"))
-    if incoming_heat_set_point is None or incoming_cool_set_point is None:
-        return
+    incoming_has_setpoints = "htsp" in zone or "clsp" in zone
 
     try:
         raw_status_zone = find_by_id(system.status.raw["zones"], zone["id"])
@@ -64,28 +64,34 @@ def _align_manual_status_setpoints_with_config(system: System, zone: dict[str, A
 
     raw_heat_set_point = _float_set_point(raw_status_zone.get("htsp"))
     raw_cool_set_point = _float_set_point(raw_status_zone.get("clsp"))
-    if raw_heat_set_point is None or raw_cool_set_point is None:
-        return
 
-    if (
-        incoming_heat_set_point != raw_heat_set_point
-        or incoming_cool_set_point != raw_cool_set_point
+    if incoming_has_setpoints and (
+        incoming_heat_set_point is None or incoming_cool_set_point is None
     ):
         return
+
+    raw_activity = raw_status_zone.get("currentActivity")
+    try:
+        raw_status_activity = ActivityTypes(raw_activity)
+    except TypeError, ValueError:
+        raw_status_activity = None
 
     incoming_activity = zone.get("currentActivity")
     if incoming_activity is not None:
         try:
             if ActivityTypes(incoming_activity) is not ActivityTypes.MANUAL:
                 return
-        except ValueError:
-            return
-    else:
-        try:
-            if ActivityTypes(raw_status_zone.get("currentActivity")) is not ActivityTypes.MANUAL:
-                return
         except TypeError, ValueError:
             return
+    elif raw_status_activity is not ActivityTypes.MANUAL:
+        return
+
+    if (
+        not incoming_has_setpoints
+        and raw_status_activity is ActivityTypes.MANUAL
+        and raw_hold == "on"
+    ):
+        return
 
     try:
         raw_config_zone = find_by_id(system.config.raw["zones"], zone["id"])
@@ -93,9 +99,11 @@ def _align_manual_status_setpoints_with_config(system: System, zone: dict[str, A
         return
     if raw_config_zone.get("hold") != "on" or raw_config_zone.get("holdActivity") != "manual":
         return
+
     activities = raw_config_zone.get("activities")
     if not isinstance(activities, list):
         return
+
     manual_activity = next(
         (
             activity
@@ -111,20 +119,38 @@ def _align_manual_status_setpoints_with_config(system: System, zone: dict[str, A
     manual_cool_set_point = _float_set_point(manual_activity.get("clsp"))
     if manual_heat_set_point is None or manual_cool_set_point is None:
         return
+    if raw_heat_set_point is None or raw_cool_set_point is None:
+        return
+    if incoming_has_setpoints and (
+        incoming_heat_set_point != raw_heat_set_point
+        or incoming_cool_set_point != raw_cool_set_point
+    ):
+        return
     if raw_heat_set_point == manual_heat_set_point and raw_cool_set_point == manual_cool_set_point:
         return
 
     zone["htsp"] = manual_heat_set_point
     zone["clsp"] = manual_cool_set_point
 
-    _LOGGER.debug(
-        "Replacing stale manual status set points for zone %s: raw=%s/%s, local=%s/%s",
-        zone_id,
-        incoming_heat_set_point,
-        incoming_cool_set_point,
-        zone["htsp"],
-        zone["clsp"],
-    )
+    if incoming_has_setpoints:
+        _LOGGER.debug(
+            "Replacing stale manual status set points for zone %s: raw=%s/%s, local=%s/%s",
+            zone_id,
+            incoming_heat_set_point,
+            incoming_cool_set_point,
+            zone["htsp"],
+            zone["clsp"],
+        )
+    else:
+        _LOGGER.debug(
+            "Replacing stale manual status set points for zone %s without explicit set points: "
+            "raw=%s/%s, local=%s/%s",
+            zone_id,
+            raw_heat_set_point,
+            raw_cool_set_point,
+            zone["htsp"],
+            zone["clsp"],
+        )
 
 
 def _float_set_point(value: Any) -> float | None:
@@ -137,9 +163,14 @@ def _float_set_point(value: Any) -> float | None:
         The parsed float value, or ``None`` when conversion is not possible.
     """
     try:
-        return float(value)
+        parsed = float(value)
     except TypeError, ValueError:
         return None
+
+    if not isfinite(parsed):
+        return None
+
+    return parsed
 
 
 class WebsocketDataUpdater:

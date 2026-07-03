@@ -1,6 +1,7 @@
 """Tests for merging Carrier websocket updates into loaded system models."""
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -737,6 +738,134 @@ async def test_status_zone_manual_activity_setpoint_only_payload_uses_optimistic
     reprocessed_status = Status(raw=carrier_system.status.raw)
     assert reprocessed_status.zones[0].heat_set_point == manual_activity.heat_set_point
     assert reprocessed_status.zones[0].cool_set_point == manual_activity.cool_set_point
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_transition_uses_config_setpoints_after_stale_replay(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Apply config setpoints when hold transitions to manual after stale setpoint replay."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": 65,
+                                "clsp": 75,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "htsp": 74,
+                        "clsp": 78,
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.MANUAL
+    assert carrier_system.status.zones[0].hold is True
+    assert carrier_system.status.zones[0].heat_set_point == 65
+    assert carrier_system.status.zones[0].cool_set_point == 75
+    reprocessed_status = Status(raw=carrier_system.status.raw)
+    assert reprocessed_status.zones[0].heat_set_point == 65
+    assert reprocessed_status.zones[0].cool_set_point == 75
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_non_finite_config_setpoint_is_not_used_for_alignment(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Ignore non-finite config set points when aligning stale manual status."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": float("nan"),
+                                "clsp": 75,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    manual_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.MANUAL)
+    assert manual_activity is not None
+    assert math.isnan(manual_activity.heat_set_point)
+    assert manual_activity.cool_set_point == 75
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": 74,
+                        "clsp": 78,
+                    }
+                ],
+            }
+        )
+    )
+    assert carrier_system.status.zones[0].heat_set_point == 74
+    assert carrier_system.status.zones[0].cool_set_point == 78
+    assert not math.isnan(carrier_system.status.zones[0].heat_set_point)
+    assert carrier_system.status.zones[0].cool_set_point != manual_activity.cool_set_point
 
 
 @pytest.mark.asyncio
