@@ -359,6 +359,8 @@ async def test_status_zone_manual_activity_uses_config_setpoints_when_status_lag
                 "zones": [
                     {
                         "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
                         "activities": [
                             {
                                 "id": "1",
@@ -416,6 +418,8 @@ async def test_status_zone_manual_activity_preserves_legitimate_status_setpoints
                 "zones": [
                     {
                         "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
                         "activities": [
                             {
                                 "id": "1",
@@ -526,6 +530,62 @@ async def test_status_zone_manual_activity_partial_payload_with_htsp_only_preser
 
 
 @pytest.mark.asyncio
+async def test_status_zone_manual_activity_ignores_stale_status_when_config_hold_cleared(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Keep incoming status set points when config hold is no longer active."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "off",
+                        "holdActivity": None,
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": 65,
+                                "clsp": 75,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": 74,
+                        "clsp": 78,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.MANUAL
+    assert carrier_system.status.zones[0].heat_set_point == 74
+    assert carrier_system.status.zones[0].cool_set_point == 78
+    reprocessed_status = Status(raw=carrier_system.status.raw)
+    assert reprocessed_status.zones[0].heat_set_point == 74
+    assert reprocessed_status.zones[0].cool_set_point == 78
+
+
+@pytest.mark.asyncio
 async def test_status_zone_manual_activity_setpoint_only_payload_uses_optimistic_setpoints(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
@@ -539,6 +599,8 @@ async def test_status_zone_manual_activity_setpoint_only_payload_uses_optimistic
                 "zones": [
                     {
                         "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
                         "activities": [
                             {
                                 "id": "1",

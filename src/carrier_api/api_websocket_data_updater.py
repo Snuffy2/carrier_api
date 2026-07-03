@@ -84,6 +84,8 @@ def _align_manual_status_setpoints_with_config(system: System, zone: dict[str, A
         raw_config_zone = find_by_id(system.config.raw["zones"], zone["id"])
     except ValueError:
         return
+    if raw_config_zone.get("hold") != "on" or raw_config_zone.get("holdActivity") != "manual":
+        return
     activities = raw_config_zone.get("activities")
     if not isinstance(activities, list):
         return
