@@ -299,7 +299,6 @@ class WebsocketDataUpdater:
         """
         self.systems = systems
         self._manual_status_replay_candidates: dict[tuple[str, str], SetPointCandidates] = {}
-        self._previous_status_set_points: dict[tuple[str, str], SetPointPair] = {}
         self._pre_setpoint_status_set_points: dict[tuple[str, str], SetPointPair] = {}
 
     def carrier_system(self, serial_id: str) -> System:
@@ -354,12 +353,12 @@ class WebsocketDataUpdater:
                     incoming_had_full_setpoints = "htsp" in zone and "clsp" in zone
                     stale_zone = find_by_id(system.status.raw["zones"], zone["id"])
                     previous_status_set_points = _raw_set_point_pair(stale_zone)
-                    if previous_status_set_points is not None:
-                        self._previous_status_set_points[replay_key] = previous_status_set_points
-                        if "htsp" in zone or "clsp" in zone:
-                            self._pre_setpoint_status_set_points[replay_key] = (
-                                previous_status_set_points
-                            )
+                    if previous_status_set_points is not None and ("htsp" in zone) != (
+                        "clsp" in zone
+                    ):
+                        self._pre_setpoint_status_set_points[replay_key] = (
+                            previous_status_set_points
+                        )
                     aligned = _align_manual_status_setpoints_with_config(
                         system,
                         zone,
@@ -584,12 +583,6 @@ class WebsocketDataUpdater:
         candidates = {
             (status_heat_set_point, status_cool_set_point),
         }
-        previous_status_set_points = self._previous_status_set_points.get(replay_key)
-        if previous_status_set_points is not None and (
-            status_heat_set_point == manual_heat_set_point
-            or status_cool_set_point == manual_cool_set_point
-        ):
-            candidates.add(previous_status_set_points)
         pre_setpoint_status_set_points = self._pre_setpoint_status_set_points.get(replay_key)
         if pre_setpoint_status_set_points is not None and (
             status_heat_set_point == manual_heat_set_point
