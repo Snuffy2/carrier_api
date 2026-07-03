@@ -50,31 +50,6 @@ def _align_manual_status_setpoints_with_config(system: System, zone: dict[str, A
     if incoming_heat_set_point is None or incoming_cool_set_point is None:
         return
 
-    status_zone = next(
-        (s for s in system.status.zones if s.api_id == zone_id),
-        None,
-    )
-    if status_zone is None:
-        return
-
-    config_zone = next(
-        (config_zone for config_zone in system.config.zones if config_zone.api_id == zone_id),
-        None,
-    )
-    if config_zone is None:
-        return
-    manual_activity = config_zone.find_activity(ActivityTypes.MANUAL)
-    if manual_activity is None:
-        return
-    if zone.get("currentActivity") is not None:
-        try:
-            if ActivityTypes(zone["currentActivity"]) is not ActivityTypes.MANUAL:
-                return
-        except ValueError:
-            return
-    elif status_zone.current_status_activity_type is not ActivityTypes.MANUAL:
-        return
-
     try:
         raw_status_zone = find_by_id(system.status.raw["zones"], zone["id"])
     except ValueError:
@@ -91,21 +66,43 @@ def _align_manual_status_setpoints_with_config(system: System, zone: dict[str, A
     ):
         return
 
-    status_heat_set_point = _float_set_point(status_zone.heat_set_point)
-    status_cool_set_point = _float_set_point(status_zone.cool_set_point)
-    if status_heat_set_point is None or status_cool_set_point is None:
+    incoming_activity = zone.get("currentActivity")
+    if incoming_activity is not None:
+        try:
+            if ActivityTypes(incoming_activity) is not ActivityTypes.MANUAL:
+                return
+        except ValueError:
+            return
+    else:
+        try:
+            if ActivityTypes(raw_status_zone.get("currentActivity")) is not ActivityTypes.MANUAL:
+                return
+        except TypeError, ValueError:
+            return
+
+    try:
+        raw_config_zone = find_by_id(system.config.raw["zones"], zone["id"])
+    except ValueError:
         return
-    manual_heat_set_point = _float_set_point(manual_activity.heat_set_point)
-    manual_cool_set_point = _float_set_point(manual_activity.cool_set_point)
-    if manual_heat_set_point is None or manual_cool_set_point is None:
+    activities = raw_config_zone.get("activities")
+    if not isinstance(activities, list):
+        return
+    manual_activity = next(
+        (
+            activity
+            for activity in activities
+            if str(activity.get("type")) == ActivityTypes.MANUAL.value
+        ),
+        None,
+    )
+    if manual_activity is None:
         return
 
-    if (
-        status_heat_set_point != manual_heat_set_point
-        or status_cool_set_point != manual_cool_set_point
-    ):
+    manual_heat_set_point = _float_set_point(manual_activity.get("htsp"))
+    manual_cool_set_point = _float_set_point(manual_activity.get("clsp"))
+    if manual_heat_set_point is None or manual_cool_set_point is None:
         return
-    if status_heat_set_point == raw_heat_set_point and status_cool_set_point == raw_cool_set_point:
+    if raw_heat_set_point == manual_heat_set_point and raw_cool_set_point == manual_cool_set_point:
         return
 
     zone["htsp"] = manual_heat_set_point
