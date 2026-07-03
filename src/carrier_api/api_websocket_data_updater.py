@@ -17,6 +17,7 @@ _LOGGER = getLogger(__name__)
 
 SetPointPair = tuple[float, float]
 MaybeSetPointPair = tuple[float | None, float | None]
+SetPointCandidates = set[SetPointPair]
 
 
 def find_by_id(collection: list[dict], item_id: str) -> dict:
@@ -41,7 +42,7 @@ def find_by_id(collection: list[dict], item_id: str) -> dict:
 def _align_manual_status_setpoints_with_config(
     system: System,
     zone: dict[str, Any],
-    stale_set_points: SetPointPair | None,
+    stale_set_points: SetPointCandidates | None,
 ) -> bool:
     """Replace stale manual status set points with matching config values.
 
@@ -131,11 +132,13 @@ def _align_manual_status_setpoints_with_config(
     if stale_set_points is None:
         return False
     if incoming_has_setpoints:
-        if "htsp" in zone and incoming_heat_set_point != stale_set_points[0]:
+        if not _matches_candidate_setpoints(
+            candidates=stale_set_points,
+            heat_set_point=incoming_heat_set_point if "htsp" in zone else None,
+            cool_set_point=incoming_cool_set_point if "clsp" in zone else None,
+        ):
             return False
-        if "clsp" in zone and incoming_cool_set_point != stale_set_points[1]:
-            return False
-    elif (raw_heat_set_point, raw_cool_set_point) != stale_set_points:
+    elif (raw_heat_set_point, raw_cool_set_point) not in stale_set_points:
         return False
     if (
         not incoming_has_setpoints
@@ -189,6 +192,46 @@ def _float_set_point(value: Any) -> float | None:
     return parsed
 
 
+def _matches_candidate_setpoints(
+    candidates: SetPointCandidates,
+    heat_set_point: float | None = None,
+    cool_set_point: float | None = None,
+) -> bool:
+    """Return whether the provided set point values match any candidate pair.
+
+    Args:
+        candidates: Candidate heat/cool pairs eligible for stale replay correction.
+        heat_set_point: Optional heat set point to match.
+        cool_set_point: Optional cool set point to match.
+
+    Returns:
+        ``True`` when all provided values match at least one candidate pair.
+    """
+    for candidate_heat, candidate_cool in candidates:
+        if heat_set_point is not None and heat_set_point != candidate_heat:
+            continue
+        if cool_set_point is not None and cool_set_point != candidate_cool:
+            continue
+        return True
+    return False
+
+
+def _raw_set_point_pair(zone: dict[str, Any]) -> SetPointPair | None:
+    """Return a finite heat/cool set point pair from a raw zone payload.
+
+    Args:
+        zone: Raw status or config zone payload.
+
+    Returns:
+        A finite heat/cool set point pair, or ``None`` when unavailable.
+    """
+    heat_set_point = _float_set_point(zone.get("htsp"))
+    cool_set_point = _float_set_point(zone.get("clsp"))
+    if heat_set_point is None or cool_set_point is None:
+        return None
+    return (heat_set_point, cool_set_point)
+
+
 def _drop_non_finite_setpoints(zone: dict[str, Any]) -> None:
     """Remove non-finite status set points before merging raw payloads.
 
@@ -219,7 +262,8 @@ class WebsocketDataUpdater:
             systems: System objects previously loaded from the GraphQL API.
         """
         self.systems = systems
-        self._manual_status_replay_candidates: dict[tuple[str, str], SetPointPair] = {}
+        self._manual_status_replay_candidates: dict[tuple[str, str], SetPointCandidates] = {}
+        self._previous_status_set_points: dict[tuple[str, str], SetPointPair] = {}
 
     def carrier_system(self, serial_id: str) -> System:
         """Return the loaded system with the requested serial number.
@@ -270,6 +314,10 @@ class WebsocketDataUpdater:
                     _timestamp = zone.pop("timestamp", None)
                     zone_id = str(zone["id"])
                     replay_key = (serial_id, zone_id)
+                    stale_zone = find_by_id(system.status.raw["zones"], zone["id"])
+                    previous_status_set_points = _raw_set_point_pair(stale_zone)
+                    if previous_status_set_points is not None:
+                        self._previous_status_set_points[replay_key] = previous_status_set_points
                     aligned = _align_manual_status_setpoints_with_config(
                         system,
                         zone,
@@ -281,7 +329,6 @@ class WebsocketDataUpdater:
                             zone=zone,
                         )
                     _drop_non_finite_setpoints(zone)
-                    stale_zone = find_by_id(system.status.raw["zones"], zone["id"])
                     always_merger.merge(stale_zone, zone)
                 merged_status = always_merger.merge(system.status.raw, websocket_message_json)
                 merged_status.update({"utcTime": datetime.now(UTC).isoformat()})
@@ -296,6 +343,13 @@ class WebsocketDataUpdater:
                     if "id" in zone:
                         zone_id = zone["id"]
                         stale_zone = find_by_id(system.config.raw["zones"], zone_id)
+                        previous_manual_set_points = self._manual_config_set_points_from_zone(
+                            stale_zone
+                        )
+                        previous_manual_hold = (
+                            stale_zone.get("hold") == "on"
+                            and stale_zone.get("holdActivity") == ActivityTypes.MANUAL.value
+                        )
                         activities = zone.pop("activities", [])
                         for activity in activities:
                             _timestamp = activity.pop("timestamp", None)
@@ -309,6 +363,8 @@ class WebsocketDataUpdater:
                             replay_key=(serial_id, str(zone_id)),
                             system=system,
                             zone=stale_zone,
+                            previous_manual_set_points=previous_manual_set_points,
+                            previous_manual_hold=previous_manual_hold,
                         )
                 always_merger.merge(system.config.raw, websocket_message_json)
                 system.config = Config(system.config.raw)
@@ -326,8 +382,8 @@ class WebsocketDataUpdater:
             replay_key: System serial and zone ID key for candidate tracking.
             zone: Incoming status zone payload.
         """
-        candidate = self._manual_status_replay_candidates.get(replay_key)
-        if candidate is None:
+        candidates = self._manual_status_replay_candidates.get(replay_key)
+        if not candidates:
             return
 
         if zone.get("hold") not in (None, "on"):
@@ -345,7 +401,13 @@ class WebsocketDataUpdater:
             if incoming_heat_set_point is None:
                 self._manual_status_replay_candidates.pop(replay_key, None)
                 return
-            if incoming_heat_set_point not in (candidate[0], config_set_points[0]):
+            if (
+                not _matches_candidate_setpoints(
+                    candidates,
+                    heat_set_point=incoming_heat_set_point,
+                )
+                and incoming_heat_set_point != config_set_points[0]
+            ):
                 self._manual_status_replay_candidates.pop(replay_key, None)
                 return
 
@@ -354,7 +416,13 @@ class WebsocketDataUpdater:
             if incoming_cool_set_point is None:
                 self._manual_status_replay_candidates.pop(replay_key, None)
                 return
-            if incoming_cool_set_point not in (candidate[1], config_set_points[1]):
+            if (
+                not _matches_candidate_setpoints(
+                    candidates,
+                    cool_set_point=incoming_cool_set_point,
+                )
+                and incoming_cool_set_point != config_set_points[1]
+            ):
                 self._manual_status_replay_candidates.pop(replay_key, None)
 
     def _manual_config_set_points(
@@ -377,10 +445,22 @@ class WebsocketDataUpdater:
         except ValueError:
             return (None, None)
 
+        return self._manual_config_set_points_from_zone(raw_config_zone)
+
+    def _manual_config_set_points_from_zone(self, zone: dict[str, Any]) -> MaybeSetPointPair:
+        """Return manual config heat/cool set points from a raw config zone.
+
+        Args:
+            zone: Raw config zone payload.
+
+        Returns:
+            Manual config heat and cool set points, or ``(None, None)`` when
+            unavailable.
+        """
         manual_activity = next(
             (
                 activity
-                for activity in raw_config_zone.get("activities", [])
+                for activity in zone.get("activities", [])
                 if str(activity.get("type")) == ActivityTypes.MANUAL.value
             ),
             None,
@@ -398,6 +478,8 @@ class WebsocketDataUpdater:
         replay_key: tuple[str, str],
         system: System,
         zone: dict[str, Any],
+        previous_manual_set_points: MaybeSetPointPair,
+        previous_manual_hold: bool,
     ) -> None:
         """Track the status set points that can be replayed after manual config.
 
@@ -405,6 +487,8 @@ class WebsocketDataUpdater:
             replay_key: System serial and zone ID key for candidate tracking.
             system: Loaded Carrier system whose config contains activity profiles.
             zone: Merged raw config zone payload.
+            previous_manual_set_points: Manual set points before the config merge.
+            previous_manual_hold: Whether the zone was in manual hold before the merge.
         """
         if zone.get("hold") != "on" or zone.get("holdActivity") != ActivityTypes.MANUAL.value:
             self._manual_status_replay_candidates.pop(replay_key, None)
@@ -427,6 +511,11 @@ class WebsocketDataUpdater:
         if manual_heat_set_point is None or manual_cool_set_point is None:
             self._manual_status_replay_candidates.pop(replay_key, None)
             return
+        if previous_manual_hold and previous_manual_set_points == (
+            manual_heat_set_point,
+            manual_cool_set_point,
+        ):
+            return
 
         try:
             raw_status_zone = find_by_id(system.status.raw["zones"], zone["id"])
@@ -440,6 +529,17 @@ class WebsocketDataUpdater:
             self._manual_status_replay_candidates.pop(replay_key, None)
             return
 
+        candidates = {
+            (status_heat_set_point, status_cool_set_point),
+        }
+        previous_status_set_points = self._previous_status_set_points.get(replay_key)
+        if previous_status_set_points is not None:
+            candidates.add(previous_status_set_points)
+        candidates.discard((manual_heat_set_point, manual_cool_set_point))
+        if not candidates:
+            self._manual_status_replay_candidates.pop(replay_key, None)
+            return
+
         if (
             status_heat_set_point == manual_heat_set_point
             and status_cool_set_point == manual_cool_set_point
@@ -447,7 +547,4 @@ class WebsocketDataUpdater:
             self._manual_status_replay_candidates.pop(replay_key, None)
             return
 
-        self._manual_status_replay_candidates[replay_key] = (
-            status_heat_set_point,
-            status_cool_set_point,
-        )
+        self._manual_status_replay_candidates[replay_key] = candidates

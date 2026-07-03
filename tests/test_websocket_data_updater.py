@@ -487,6 +487,100 @@ async def test_status_zone_manual_activity_preserves_legitimate_status_setpoints
 
 
 @pytest.mark.asyncio
+async def test_status_zone_manual_activity_duplicate_config_does_not_rearm_replay_candidate(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Keep duplicate config frames from treating live status as stale replay."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": 65,
+                                "clsp": 75,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": 79,
+                        "clsp": 81,
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": 65,
+                                "clsp": 75,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": 79,
+                        "clsp": 81,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].heat_set_point == 79
+    assert carrier_system.status.zones[0].cool_set_point == 81
+
+
+@pytest.mark.asyncio
 async def test_status_zone_manual_activity_with_malformed_setpoint_does_not_raise(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
@@ -989,6 +1083,74 @@ async def test_status_zone_manual_activity_partial_config_update_keeps_stale_rep
                         "currentActivity": "manual",
                         "hold": "on",
                         "htsp": 65,
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "htsp": 74,
+                        "clsp": 78,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].heat_set_point == 65
+    assert carrier_system.status.zones[0].cool_set_point == 75
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_partial_status_before_config_keeps_previous_replay_candidate(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Use the previous status pair when partial status arrives before config."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": 65,
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": 65,
+                                "clsp": 75,
+                            }
+                        ],
                     }
                 ],
             }
