@@ -473,6 +473,52 @@ async def test_status_zone_manual_activity_with_malformed_setpoint_does_not_rais
 
 
 @pytest.mark.asyncio
+async def test_status_zone_manual_activity_partial_payload_with_htsp_only_preserves_incoming_setpoint(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Ignore partial manual status updates that only match stale duplicate heat set point."""
+    manual_zone = carrier_system.config.zones[0]
+    manual_zone.activities.append(
+        ConfigZoneActivity(
+            {
+                "id": "1",
+                "zoneId": manual_zone.api_id,
+                "type": "manual",
+                "fan": "low",
+                "htsp": "65",
+                "clsp": "75",
+            }
+        )
+    )
+    assert carrier_system.status.zones[0].heat_set_point == 74
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": 65,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.MANUAL
+    assert carrier_system.status.zones[0].heat_set_point == 65
+    assert carrier_system.status.zones[0].cool_set_point == 78
+    reprocessed_status = Status(raw=carrier_system.status.raw)
+    assert reprocessed_status.zones[0].heat_set_point == 65
+    assert reprocessed_status.zones[0].cool_set_point == 78
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("websocket_message_str", ["messages/config_zone_hold.json"], indirect=True)
 async def test_config_zone_hold_message_handler(
     data_updater: WebsocketDataUpdater,

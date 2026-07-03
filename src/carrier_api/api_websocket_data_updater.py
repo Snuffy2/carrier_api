@@ -43,7 +43,7 @@ def _align_manual_status_setpoints_with_config(system: System, zone: dict[str, A
     """
     if zone.get("currentActivity") != ActivityTypes.MANUAL.value:
         return
-    if "htsp" not in zone and "clsp" not in zone:
+    if "htsp" not in zone or "clsp" not in zone:
         return
 
     config_zone = next(
@@ -69,21 +69,17 @@ def _align_manual_status_setpoints_with_config(system: System, zone: dict[str, A
     current_manual_activity = manual_activities[0]
     stale_manual_activities = manual_activities[1:]
 
-    zone_heat_set_point = _float_set_point(zone.get("htsp")) if "htsp" in zone else None
-    zone_cool_set_point = _float_set_point(zone.get("clsp")) if "clsp" in zone else None
+    zone_heat_set_point = _float_set_point(zone.get("htsp"))
+    zone_cool_set_point = _float_set_point(zone.get("clsp"))
+    if zone_heat_set_point is None or zone_cool_set_point is None:
+        return
 
     if any(
-        (
-            "htsp" not in zone
-            or (zone_heat_set_point is not None and activity.heat_set_point == zone_heat_set_point)
-        )
-        and (
-            "clsp" not in zone
-            or (zone_cool_set_point is not None and activity.cool_set_point == zone_cool_set_point)
-        )
+        activity.heat_set_point == zone_heat_set_point
+        and activity.cool_set_point == zone_cool_set_point
         for activity in stale_manual_activities
     ):
-        if "htsp" in zone and zone_heat_set_point != current_manual_activity.heat_set_point:
+        if zone_heat_set_point != current_manual_activity.heat_set_point:
             _LOGGER.debug(
                 "Ignoring stale manual status heat set point for zone %s: %s != %s",
                 zone["id"],
@@ -91,7 +87,7 @@ def _align_manual_status_setpoints_with_config(system: System, zone: dict[str, A
                 current_manual_activity.heat_set_point,
             )
             zone["htsp"] = current_manual_activity.heat_set_point
-        if "clsp" in zone and zone_cool_set_point != current_manual_activity.cool_set_point:
+        if zone_cool_set_point != current_manual_activity.cool_set_point:
             _LOGGER.debug(
                 "Ignoring stale manual status cool set point for zone %s: %s != %s",
                 zone["id"],
