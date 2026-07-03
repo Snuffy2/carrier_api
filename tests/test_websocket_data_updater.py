@@ -978,6 +978,57 @@ async def test_status_zone_manual_activity_one_sided_transition_uses_config_setp
 
 
 @pytest.mark.asyncio
+async def test_status_zone_manual_activity_invalid_setpoint_transition_uses_config_setpoints(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Treat malformed-only setpoint transitions like no-setpoint transitions."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": 65,
+                                "clsp": 75,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": float("nan"),
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].heat_set_point == 65
+    assert carrier_system.status.zones[0].cool_set_point == 75
+
+
+@pytest.mark.asyncio
 async def test_status_zone_manual_activity_contradictory_transition_preserves_status(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
@@ -1544,11 +1595,11 @@ async def test_status_zone_manual_activity_transition_uses_config_setpoints_afte
 
 
 @pytest.mark.asyncio
-async def test_status_zone_manual_activity_full_replay_consumes_candidate(
+async def test_status_zone_manual_activity_repeated_full_replay_keeps_candidate(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
 ) -> None:
-    """Preserve a repeated full pair after the first stale replay correction."""
+    """Keep correcting repeated stale full status frames after config changes."""
     await data_updater.message_handler(
         json.dumps(
             {
@@ -1591,8 +1642,8 @@ async def test_status_zone_manual_activity_full_replay_consumes_candidate(
     assert carrier_system.status.zones[0].cool_set_point == 75
 
     await data_updater.message_handler(json.dumps(stale_replay))
-    assert carrier_system.status.zones[0].heat_set_point == 74
-    assert carrier_system.status.zones[0].cool_set_point == 78
+    assert carrier_system.status.zones[0].heat_set_point == 65
+    assert carrier_system.status.zones[0].cool_set_point == 75
 
 
 @pytest.mark.asyncio

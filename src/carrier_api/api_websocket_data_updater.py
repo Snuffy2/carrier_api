@@ -59,7 +59,9 @@ def _align_manual_status_setpoints_with_config(
     zone_id = str(zone["id"])
     incoming_heat_set_point = _float_set_point(zone.get("htsp"))
     incoming_cool_set_point = _float_set_point(zone.get("clsp"))
-    incoming_has_setpoints = "htsp" in zone or "clsp" in zone
+    incoming_has_setpoints = (
+        incoming_heat_set_point is not None or incoming_cool_set_point is not None
+    )
     incoming_activity = _activity_type(zone.get("currentActivity"))
     incoming_is_manual_transition = (
         not incoming_has_setpoints
@@ -131,8 +133,6 @@ def _align_manual_status_setpoints_with_config(
     if stale_set_points is None:
         return False
     if incoming_has_setpoints:
-        if "htsp" not in zone or "clsp" not in zone:
-            return False
         if incoming_heat_set_point is None or incoming_cool_set_point is None:
             return False
         if not _matches_candidate_setpoints(
@@ -375,9 +375,7 @@ class WebsocketDataUpdater:
                         zone,
                         self._manual_status_replay_candidates.get(replay_key),
                     )
-                    if aligned and incoming_had_full_setpoints:
-                        self._manual_status_replay_candidates.pop(replay_key, None)
-                    elif not aligned:
+                    if not aligned:
                         self._clear_manual_replay_candidate(
                             replay_key=replay_key,
                             zone=zone,
