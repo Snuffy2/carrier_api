@@ -260,6 +260,7 @@ async def test_status_zone_activity_message_handler(
     assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.WAKE
     assert carrier_system.status.zones[0].heat_set_point == 74
     assert carrier_system.status.zones[0].cool_set_point == 78
+
     await data_updater.message_handler(websocket_message_str)
     assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.HOME
     assert carrier_system.status.zones[0].heat_set_point == 77
@@ -333,6 +334,7 @@ async def test_status_zone_htsp_message_handler(
     """
     assert carrier_system.status.zones[0].heat_set_point == 74
     assert carrier_system.status.zones[0].cool_set_point == 78
+
     await data_updater.message_handler(websocket_message_str)
     assert carrier_system.status.zones[0].heat_set_point == 72
     assert carrier_system.status.zones[0].cool_set_point == 85
@@ -1495,6 +1497,118 @@ async def test_status_zone_manual_activity_config_matching_status_retires_replay
 
     assert carrier_system.status.zones[0].heat_set_point == 74
     assert carrier_system.status.zones[0].cool_set_point == 78
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_old_previous_status_does_not_seed_new_config_replay(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Do not reuse unrelated historical status pairs for later config changes."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": 65,
+                                "clsp": 75,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": 65,
+                        "clsp": 75,
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": 70,
+                        "clsp": 80,
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": 68,
+                                "clsp": 78,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": 65,
+                        "clsp": 75,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].heat_set_point == 65
+    assert carrier_system.status.zones[0].cool_set_point == 75
 
 
 @pytest.mark.asyncio

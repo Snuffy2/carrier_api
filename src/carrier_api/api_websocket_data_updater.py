@@ -425,7 +425,6 @@ class WebsocketDataUpdater:
         if "htsp" in zone:
             incoming_heat_set_point = _float_set_point(zone.get("htsp"))
             if incoming_heat_set_point is None:
-                self._manual_status_replay_candidates.pop(replay_key, None)
                 return
             if (
                 not _matches_candidate_setpoints(
@@ -440,7 +439,6 @@ class WebsocketDataUpdater:
         if "clsp" in zone:
             incoming_cool_set_point = _float_set_point(zone.get("clsp"))
             if incoming_cool_set_point is None:
-                self._manual_status_replay_candidates.pop(replay_key, None)
                 return
             if (
                 not _matches_candidate_setpoints(
@@ -565,7 +563,10 @@ class WebsocketDataUpdater:
             (status_heat_set_point, status_cool_set_point),
         }
         previous_status_set_points = self._previous_status_set_points.get(replay_key)
-        if previous_status_set_points is not None:
+        if previous_status_set_points is not None and (
+            status_heat_set_point == manual_heat_set_point
+            or status_cool_set_point == manual_cool_set_point
+        ):
             candidates.add(previous_status_set_points)
         candidates.discard((manual_heat_set_point, manual_cool_set_point))
         if not candidates:
