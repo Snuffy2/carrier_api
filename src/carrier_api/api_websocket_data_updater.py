@@ -350,6 +350,16 @@ class WebsocketDataUpdater:
                 return system
         raise ValueError(f"No carrier_system found for serial {serial_id}")
 
+    def _clear_replay_state(self, replay_key: tuple[str, str]) -> None:
+        """Clear all stale manual replay tracking for a zone.
+
+        Args:
+            replay_key: System serial and zone ID key for candidate tracking.
+        """
+        self._manual_status_replay_candidates.pop(replay_key, None)
+        self._pre_setpoint_status_set_points.pop(replay_key, None)
+        self._pre_malformed_status_set_points.pop(replay_key, None)
+
     async def message_handler(self, websocket_message: str) -> None:
         """Apply one raw Carrier websocket message to the matching system.
 
@@ -607,7 +617,7 @@ class WebsocketDataUpdater:
             previous_manual_hold: Whether the zone was in manual hold before the merge.
         """
         if zone.get("hold") != "on" or zone.get("holdActivity") != ActivityTypes.MANUAL.value:
-            self._manual_status_replay_candidates.pop(replay_key, None)
+            self._clear_replay_state(replay_key)
             return
 
         manual_activity = next(
@@ -619,7 +629,7 @@ class WebsocketDataUpdater:
             None,
         )
         if manual_activity is None:
-            self._manual_status_replay_candidates.pop(replay_key, None)
+            self._clear_replay_state(replay_key)
             return
 
         manual_heat_set_point = _float_set_point(manual_activity.get("htsp"))

@@ -784,6 +784,114 @@ async def test_status_zone_manual_activity_ignores_stale_status_when_config_hold
 
 
 @pytest.mark.asyncio
+async def test_status_zone_manual_activity_config_hold_off_clears_pre_status_replay_cache(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Do not reuse pre-status replay caches after config exits manual hold."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": 70,
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": 68,
+                                "clsp": 78,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "off",
+                        "holdActivity": None,
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": 69,
+                                "clsp": 78,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "htsp": 74,
+                        "clsp": 78,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].heat_set_point == 74
+    assert carrier_system.status.zones[0].cool_set_point == 78
+
+
+@pytest.mark.asyncio
 async def test_status_zone_manual_activity_setpoint_only_payload_uses_optimistic_setpoints(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
