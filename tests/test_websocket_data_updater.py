@@ -1577,6 +1577,26 @@ async def test_status_zone_manual_activity_non_finite_partial_status_does_not_al
     assert carrier_system.status.zones[0].heat_set_point == 74
     assert carrier_system.status.zones[0].cool_set_point == 78
 
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "htsp": 74,
+                        "clsp": 78,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].heat_set_point == 65
+    assert carrier_system.status.zones[0].cool_set_point == 75
+
 
 @pytest.mark.asyncio
 async def test_status_zone_manual_activity_config_matching_status_retires_replay_candidate(

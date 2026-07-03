@@ -356,11 +356,11 @@ class WebsocketDataUpdater:
                         self._manual_status_replay_candidates.get(replay_key),
                     )
                     if not aligned:
+                        _drop_non_finite_setpoints(zone)
                         self._clear_manual_replay_candidate(
                             replay_key=replay_key,
                             zone=zone,
                         )
-                    _drop_non_finite_setpoints(zone)
                     always_merger.merge(stale_zone, zone)
                 merged_status = always_merger.merge(system.status.raw, websocket_message_json)
                 merged_status.update({"utcTime": datetime.now(UTC).isoformat()})
