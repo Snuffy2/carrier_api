@@ -350,15 +350,19 @@ class WebsocketDataUpdater:
                     _timestamp = zone.pop("timestamp", None)
                     zone_id = str(zone["id"])
                     replay_key = (serial_id, zone_id)
-                    incoming_had_full_setpoints = "htsp" in zone and "clsp" in zone
+                    incoming_heat_set_point = _float_set_point(zone.get("htsp"))
+                    incoming_cool_set_point = _float_set_point(zone.get("clsp"))
+                    incoming_had_full_setpoints = (
+                        incoming_heat_set_point is not None and incoming_cool_set_point is not None
+                    )
                     stale_zone = find_by_id(system.status.raw["zones"], zone["id"])
                     previous_status_set_points = _raw_set_point_pair(stale_zone)
                     if (
                         previous_status_set_points is not None
                         and ("htsp" in zone) != ("clsp" in zone)
                         and (
-                            ("htsp" in zone and _float_set_point(zone.get("htsp")) is not None)
-                            or ("clsp" in zone and _float_set_point(zone.get("clsp")) is not None)
+                            ("htsp" in zone and incoming_heat_set_point is not None)
+                            or ("clsp" in zone and incoming_cool_set_point is not None)
                         )
                     ):
                         self._pre_setpoint_status_set_points[replay_key] = (
@@ -374,11 +378,11 @@ class WebsocketDataUpdater:
                     if aligned and incoming_had_full_setpoints:
                         self._manual_status_replay_candidates.pop(replay_key, None)
                     elif not aligned:
-                        _drop_non_finite_setpoints(zone)
                         self._clear_manual_replay_candidate(
                             replay_key=replay_key,
                             zone=zone,
                         )
+                        _drop_non_finite_setpoints(zone)
                     always_merger.merge(stale_zone, zone)
                 merged_status = always_merger.merge(system.status.raw, websocket_message_json)
                 merged_status.update({"utcTime": datetime.now(UTC).isoformat()})
@@ -447,6 +451,10 @@ class WebsocketDataUpdater:
         config_set_points = self._manual_config_set_points(replay_key=replay_key)
         incoming_heat_set_point = _float_set_point(zone.get("htsp"))
         incoming_cool_set_point = _float_set_point(zone.get("clsp"))
+        if ("htsp" in zone and incoming_heat_set_point is None) or (
+            "clsp" in zone and incoming_cool_set_point is None
+        ):
+            return
 
         if "htsp" in zone and "clsp" in zone:
             incoming_pair = (incoming_heat_set_point, incoming_cool_set_point)
