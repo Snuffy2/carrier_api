@@ -341,6 +341,46 @@ async def test_status_zone_htsp_message_handler(
 
 
 @pytest.mark.asyncio
+async def test_status_zone_manual_activity_uses_config_setpoints_when_status_lags(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Ignore stale status set points when manual activity config is newer.
+
+    Args:
+        data_updater: Websocket updater under test.
+        carrier_system: Prepared system model that receives the update.
+    """
+    manual_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.MANUAL)
+    assert manual_activity is not None
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": 65,
+                        "clsp": 75,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.MANUAL
+    assert carrier_system.status.zones[0].heat_set_point == manual_activity.heat_set_point
+    assert carrier_system.status.zones[0].cool_set_point == manual_activity.cool_set_point
+    reprocessed_status = Status(raw=carrier_system.status.raw)
+    assert reprocessed_status.zones[0].heat_set_point == manual_activity.heat_set_point
+    assert reprocessed_status.zones[0].cool_set_point == manual_activity.cool_set_point
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("websocket_message_str", ["messages/config_zone_hold.json"], indirect=True)
 async def test_config_zone_hold_message_handler(
     data_updater: WebsocketDataUpdater,

@@ -3,10 +3,12 @@
 from datetime import UTC, datetime
 from json import loads
 from logging import getLogger
+from typing import Any
 
 from deepmerge import always_merger
 
 from .config import Config
+from .const import ActivityTypes
 from .status import Status
 from .system import System
 
@@ -30,6 +32,50 @@ def find_by_id(collection: list[dict], item_id: str) -> dict:
         if str(item["id"]) == str(item_id):
             return item
     raise ValueError(f"id: {item_id} not found in collection")
+
+
+def _align_manual_status_setpoints_with_config(system: System, zone: dict[str, Any]) -> None:
+    """Replace stale manual status set points with matching config values.
+
+    Args:
+        system: Loaded Carrier system whose config contains activity profiles.
+        zone: Incoming status zone payload to normalize before merging.
+    """
+    if zone.get("currentActivity") != ActivityTypes.MANUAL.value:
+        return
+    if "htsp" not in zone and "clsp" not in zone:
+        return
+
+    config_zone = next(
+        (
+            config_zone
+            for config_zone in system.config.zones
+            if config_zone.api_id == str(zone["id"])
+        ),
+        None,
+    )
+    if config_zone is None:
+        return
+    manual_activity = config_zone.find_activity(ActivityTypes.MANUAL)
+    if manual_activity is None:
+        return
+
+    if "htsp" in zone and float(zone["htsp"]) != manual_activity.heat_set_point:
+        _LOGGER.debug(
+            "Ignoring stale manual status heat set point for zone %s: %s != %s",
+            zone["id"],
+            zone["htsp"],
+            manual_activity.heat_set_point,
+        )
+        zone["htsp"] = manual_activity.heat_set_point
+    if "clsp" in zone and float(zone["clsp"]) != manual_activity.cool_set_point:
+        _LOGGER.debug(
+            "Ignoring stale manual status cool set point for zone %s: %s != %s",
+            zone["id"],
+            zone["clsp"],
+            manual_activity.cool_set_point,
+        )
+        zone["clsp"] = manual_activity.cool_set_point
 
 
 class WebsocketDataUpdater:
@@ -93,6 +139,7 @@ class WebsocketDataUpdater:
                 zones = websocket_message_json.pop("zones", [])
                 for zone in zones:
                     _timestamp = zone.pop("timestamp", None)
+                    _align_manual_status_setpoints_with_config(system, zone)
                     stale_zone = find_by_id(system.status.raw["zones"], zone["id"])
                     always_merger.merge(stale_zone, zone)
                 merged_status = always_merger.merge(system.status.raw, websocket_message_json)
