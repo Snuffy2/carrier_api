@@ -892,9 +892,17 @@ async def test_status_zone_manual_activity_config_hold_off_clears_pre_status_rep
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "manual_setpoints",
+    [
+        (68, 78),
+        (68, 75),
+    ],
+)
 async def test_status_zone_manual_activity_multiple_partials_preserve_earlier_replay_candidate(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
+    manual_setpoints: tuple[int, int],
 ) -> None:
     """Keep earlier full status pairs as candidates across repeated partial frames."""
     await data_updater.message_handler(
@@ -945,8 +953,8 @@ async def test_status_zone_manual_activity_multiple_partials_preserve_earlier_re
                             {
                                 "id": "1",
                                 "type": "manual",
-                                "htsp": 68,
-                                "clsp": 78,
+                                "htsp": manual_setpoints[0],
+                                "clsp": manual_setpoints[1],
                             }
                         ],
                     }
@@ -972,8 +980,8 @@ async def test_status_zone_manual_activity_multiple_partials_preserve_earlier_re
         )
     )
 
-    assert carrier_system.status.zones[0].heat_set_point == 68
-    assert carrier_system.status.zones[0].cool_set_point == 78
+    assert carrier_system.status.zones[0].heat_set_point == manual_setpoints[0]
+    assert carrier_system.status.zones[0].cool_set_point == manual_setpoints[1]
 
 
 @pytest.mark.asyncio
@@ -1364,6 +1372,115 @@ async def test_status_zone_manual_activity_partial_update_clears_stale_replay_ca
                         "currentActivity": "manual",
                         "hold": "on",
                         "htsp": 79,
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "htsp": 74,
+                        "clsp": 78,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].heat_set_point == 74
+    assert carrier_system.status.zones[0].cool_set_point == 78
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_partial_update_clears_pre_status_replay_history(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Do not rearm old pre-status candidates after a valid partial disproves them."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": 70,
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": 65,
+                                "clsp": 75,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "clsp": 76,
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": 68,
+                                "clsp": 76,
+                            }
+                        ],
                     }
                 ],
             }

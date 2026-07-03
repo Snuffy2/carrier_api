@@ -503,11 +503,11 @@ class WebsocketDataUpdater:
             return
 
         if zone.get("hold") not in (None, "on"):
-            self._manual_status_replay_candidates.pop(replay_key, None)
+            self._clear_replay_state(replay_key)
             return
 
         if "currentActivity" in zone and zone["currentActivity"] != ActivityTypes.MANUAL.value:
-            self._manual_status_replay_candidates.pop(replay_key, None)
+            self._clear_replay_state(replay_key)
             return
 
         config_set_points = self._manual_config_set_points(replay_key=replay_key)
@@ -523,10 +523,10 @@ class WebsocketDataUpdater:
         if "htsp" in zone and "clsp" in zone:
             incoming_pair = (incoming_heat_set_point, incoming_cool_set_point)
             if incoming_pair == config_set_points:
-                self._manual_status_replay_candidates.pop(replay_key, None)
+                self._clear_replay_state(replay_key)
                 return
             if incoming_pair not in candidates:
-                self._manual_status_replay_candidates.pop(replay_key, None)
+                self._clear_replay_state(replay_key)
             return
 
         if "htsp" in zone:
@@ -539,7 +539,7 @@ class WebsocketDataUpdater:
                 )
                 and incoming_heat_set_point != config_set_points[0]
             ):
-                self._manual_status_replay_candidates.pop(replay_key, None)
+                self._clear_replay_state(replay_key)
                 return
 
         if "clsp" in zone:
@@ -552,7 +552,7 @@ class WebsocketDataUpdater:
                 )
                 and incoming_cool_set_point != config_set_points[1]
             ):
-                self._manual_status_replay_candidates.pop(replay_key, None)
+                self._clear_replay_state(replay_key)
                 return
 
     def _manual_config_set_points(
@@ -662,10 +662,7 @@ class WebsocketDataUpdater:
             (status_heat_set_point, status_cool_set_point),
         }
         pre_setpoint_status_set_points = self._pre_setpoint_status_set_points.get(replay_key)
-        if pre_setpoint_status_set_points is not None and (
-            status_heat_set_point == manual_heat_set_point
-            or status_cool_set_point == manual_cool_set_point
-        ):
+        if pre_setpoint_status_set_points is not None:
             candidates.update(pre_setpoint_status_set_points)
         pre_malformed_status_set_points = self._pre_malformed_status_set_points.get(replay_key)
         if pre_malformed_status_set_points is not None:
