@@ -740,6 +740,88 @@ async def test_status_zone_manual_activity_setpoint_only_payload_uses_optimistic
 
 
 @pytest.mark.asyncio
+async def test_status_zone_manual_activity_setpoint_only_payload_does_not_rewrite_after_hold_off(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Keep stale set-point-only replay values when effective hold is no longer active."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": 65,
+                                "clsp": 75,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    manual_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.MANUAL)
+    assert manual_activity is not None
+    assert manual_activity.heat_set_point == 65
+    assert manual_activity.cool_set_point == 75
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "off",
+                        "htsp": 74,
+                        "clsp": 78,
+                    }
+                ],
+            }
+        )
+    )
+    assert carrier_system.status.zones[0].hold is False
+    assert carrier_system.status.zones[0].heat_set_point == 74
+    assert carrier_system.status.zones[0].cool_set_point == 78
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "htsp": 74,
+                        "clsp": 78,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].hold is False
+    assert carrier_system.status.zones[0].heat_set_point == 74
+    assert carrier_system.status.zones[0].cool_set_point == 78
+    assert carrier_system.status.zones[0].heat_set_point != manual_activity.heat_set_point
+    assert carrier_system.status.zones[0].cool_set_point != manual_activity.cool_set_point
+    reprocessed_status = Status(raw=carrier_system.status.raw)
+    assert reprocessed_status.zones[0].hold is False
+    assert reprocessed_status.zones[0].heat_set_point == 74
+    assert reprocessed_status.zones[0].cool_set_point == 78
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("websocket_message_str", ["messages/config_zone_hold.json"], indirect=True)
 async def test_config_zone_hold_message_handler(
     data_updater: WebsocketDataUpdater,

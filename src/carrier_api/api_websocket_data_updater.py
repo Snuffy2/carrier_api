@@ -44,9 +44,6 @@ def _align_manual_status_setpoints_with_config(system: System, zone: dict[str, A
     if "id" not in zone:
         return
     zone_id = str(zone["id"])
-    if "hold" in zone and zone["hold"] != "on":
-        return
-
     incoming_heat_set_point = _float_set_point(zone.get("htsp"))
     incoming_cool_set_point = _float_set_point(zone.get("clsp"))
     if incoming_heat_set_point is None or incoming_cool_set_point is None:
@@ -55,6 +52,14 @@ def _align_manual_status_setpoints_with_config(system: System, zone: dict[str, A
     try:
         raw_status_zone = find_by_id(system.status.raw["zones"], zone["id"])
     except ValueError:
+        return
+
+    incoming_hold = zone.get("hold")
+    raw_hold = raw_status_zone.get("hold")
+    if incoming_hold is not None:
+        if incoming_hold != "on":
+            return
+    elif raw_hold != "on":
         return
 
     raw_heat_set_point = _float_set_point(raw_status_zone.get("htsp"))
