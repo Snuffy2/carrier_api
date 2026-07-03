@@ -1550,6 +1550,58 @@ async def test_status_zone_manual_activity_non_finite_config_setpoint_is_not_use
 
 
 @pytest.mark.asyncio
+async def test_status_zone_manual_activity_boolean_config_setpoint_is_not_used_for_alignment(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Ignore boolean config set points when aligning stale manual status."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": False,
+                                "clsp": 75,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": 74,
+                        "clsp": 78,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].heat_set_point == 74
+    assert carrier_system.status.zones[0].cool_set_point == 78
+
+
+@pytest.mark.asyncio
 async def test_status_zone_manual_activity_non_finite_status_setpoint_is_not_merged(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
@@ -1626,6 +1678,77 @@ async def test_status_zone_manual_activity_non_finite_partial_status_does_not_al
         )
     )
 
+    assert carrier_system.status.zones[0].heat_set_point == 74
+    assert carrier_system.status.zones[0].cool_set_point == 78
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "htsp": 74,
+                        "clsp": 78,
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].heat_set_point == 65
+    assert carrier_system.status.zones[0].cool_set_point == 75
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_boolean_status_setpoint_is_not_merged_or_retired(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Ignore boolean status set points without losing stale replay correction."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": 65,
+                                "clsp": 75,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "currentActivity": "manual",
+                        "hold": "on",
+                        "htsp": False,
+                        "clsp": 78,
+                    }
+                ],
+            }
+        )
+    )
     assert carrier_system.status.zones[0].heat_set_point == 74
     assert carrier_system.status.zones[0].cool_set_point == 78
 

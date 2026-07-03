@@ -181,6 +181,9 @@ def _float_set_point(value: Any) -> float | None:
     Returns:
         The parsed float value, or ``None`` when conversion is not possible.
     """
+    if isinstance(value, bool):
+        return None
+
     try:
         parsed = float(value)
     except TypeError, ValueError:
@@ -275,12 +278,7 @@ def _drop_non_finite_setpoints(zone: dict[str, Any]) -> None:
     for key in ("htsp", "clsp"):
         if key not in zone:
             continue
-        try:
-            parsed = float(zone[key])
-        except TypeError, ValueError:
-            zone.pop(key)
-            continue
-        if not isfinite(parsed):
+        if _float_set_point(zone[key]) is None:
             zone.pop(key)
 
 
