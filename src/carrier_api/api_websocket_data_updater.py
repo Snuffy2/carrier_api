@@ -348,6 +348,7 @@ class WebsocketDataUpdater:
                     _timestamp = zone.pop("timestamp", None)
                     zone_id = str(zone["id"])
                     replay_key = (serial_id, zone_id)
+                    incoming_had_full_setpoints = "htsp" in zone and "clsp" in zone
                     stale_zone = find_by_id(system.status.raw["zones"], zone["id"])
                     previous_status_set_points = _raw_set_point_pair(stale_zone)
                     if previous_status_set_points is not None:
@@ -361,7 +362,9 @@ class WebsocketDataUpdater:
                         zone,
                         self._manual_status_replay_candidates.get(replay_key),
                     )
-                    if not aligned:
+                    if aligned and incoming_had_full_setpoints:
+                        self._manual_status_replay_candidates.pop(replay_key, None)
+                    elif not aligned:
                         _drop_non_finite_setpoints(zone)
                         self._clear_manual_replay_candidate(
                             replay_key=replay_key,

@@ -1493,6 +1493,58 @@ async def test_status_zone_manual_activity_transition_uses_config_setpoints_afte
 
 
 @pytest.mark.asyncio
+async def test_status_zone_manual_activity_full_replay_consumes_candidate(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Preserve a repeated full pair after the first stale replay correction."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": 1,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "manual",
+                                "htsp": 65,
+                                "clsp": 75,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    stale_replay = {
+        "messageType": "InfinityStatus",
+        "deviceId": "SERIALXXX",
+        "zones": [
+            {
+                "id": 1,
+                "currentActivity": "manual",
+                "hold": "on",
+                "htsp": 74,
+                "clsp": 78,
+            }
+        ],
+    }
+    await data_updater.message_handler(json.dumps(stale_replay))
+    assert carrier_system.status.zones[0].heat_set_point == 65
+    assert carrier_system.status.zones[0].cool_set_point == 75
+
+    await data_updater.message_handler(json.dumps(stale_replay))
+    assert carrier_system.status.zones[0].heat_set_point == 74
+    assert carrier_system.status.zones[0].cool_set_point == 78
+
+
+@pytest.mark.asyncio
 async def test_status_zone_manual_activity_non_finite_config_setpoint_is_not_used_for_alignment(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
