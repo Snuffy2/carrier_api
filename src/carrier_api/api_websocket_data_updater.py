@@ -16,6 +16,7 @@ from .system import System
 _LOGGER = getLogger(__name__)
 
 SetPointPair = tuple[float, float]
+MaybeSetPointPair = tuple[float | None, float | None]
 
 
 def find_by_id(collection: list[dict], item_id: str) -> dict:
@@ -75,11 +76,6 @@ def _align_manual_status_setpoints_with_config(
     raw_heat_set_point = _float_set_point(raw_status_zone.get("htsp"))
     raw_cool_set_point = _float_set_point(raw_status_zone.get("clsp"))
 
-    if incoming_has_setpoints and (
-        incoming_heat_set_point is None or incoming_cool_set_point is None
-    ):
-        return False
-
     raw_activity = raw_status_zone.get("currentActivity")
     try:
         raw_status_activity = ActivityTypes(raw_activity)
@@ -135,7 +131,9 @@ def _align_manual_status_setpoints_with_config(
     if stale_set_points is None:
         return False
     if incoming_has_setpoints:
-        if (incoming_heat_set_point, incoming_cool_set_point) != stale_set_points:
+        if "htsp" in zone and incoming_heat_set_point != stale_set_points[0]:
+            return False
+        if "clsp" in zone and incoming_cool_set_point != stale_set_points[1]:
             return False
     elif (raw_heat_set_point, raw_cool_set_point) != stale_set_points:
         return False
@@ -189,6 +187,23 @@ def _float_set_point(value: Any) -> float | None:
         return None
 
     return parsed
+
+
+def _drop_non_finite_setpoints(zone: dict[str, Any]) -> None:
+    """Remove non-finite status set points before merging raw payloads.
+
+    Args:
+        zone: Incoming status zone payload.
+    """
+    for key in ("htsp", "clsp"):
+        if key not in zone:
+            continue
+        try:
+            parsed = float(zone[key])
+        except TypeError, ValueError:
+            continue
+        if not isfinite(parsed):
+            zone.pop(key)
 
 
 class WebsocketDataUpdater:
@@ -265,6 +280,7 @@ class WebsocketDataUpdater:
                             replay_key=replay_key,
                             zone=zone,
                         )
+                    _drop_non_finite_setpoints(zone)
                     stale_zone = find_by_id(system.status.raw["zones"], zone["id"])
                     always_merger.merge(stale_zone, zone)
                 merged_status = always_merger.merge(system.status.raw, websocket_message_json)
@@ -322,16 +338,60 @@ class WebsocketDataUpdater:
             self._manual_status_replay_candidates.pop(replay_key, None)
             return
 
+        config_set_points = self._manual_config_set_points(replay_key=replay_key)
+
         if "htsp" in zone:
             incoming_heat_set_point = _float_set_point(zone.get("htsp"))
-            if incoming_heat_set_point is None or incoming_heat_set_point != candidate[0]:
+            if incoming_heat_set_point is None:
+                self._manual_status_replay_candidates.pop(replay_key, None)
+                return
+            if incoming_heat_set_point not in (candidate[0], config_set_points[0]):
                 self._manual_status_replay_candidates.pop(replay_key, None)
                 return
 
         if "clsp" in zone:
             incoming_cool_set_point = _float_set_point(zone.get("clsp"))
-            if incoming_cool_set_point is None or incoming_cool_set_point != candidate[1]:
+            if incoming_cool_set_point is None:
                 self._manual_status_replay_candidates.pop(replay_key, None)
+                return
+            if incoming_cool_set_point not in (candidate[1], config_set_points[1]):
+                self._manual_status_replay_candidates.pop(replay_key, None)
+
+    def _manual_config_set_points(
+        self,
+        replay_key: tuple[str, str],
+    ) -> MaybeSetPointPair:
+        """Return the config set points paired with a stale replay candidate.
+
+        Args:
+            replay_key: System serial and zone ID key for candidate tracking.
+
+        Returns:
+            Manual config heat and cool set points, or ``(None, None)`` when
+            config is unavailable.
+        """
+        serial_id, zone_id = replay_key
+        try:
+            system = self.carrier_system(serial_id=serial_id)
+            raw_config_zone = find_by_id(system.config.raw["zones"], zone_id)
+        except ValueError:
+            return (None, None)
+
+        manual_activity = next(
+            (
+                activity
+                for activity in raw_config_zone.get("activities", [])
+                if str(activity.get("type")) == ActivityTypes.MANUAL.value
+            ),
+            None,
+        )
+        if manual_activity is None:
+            return (None, None)
+
+        return (
+            _float_set_point(manual_activity.get("htsp")),
+            _float_set_point(manual_activity.get("clsp")),
+        )
 
     def _update_manual_replay_candidate(
         self,
