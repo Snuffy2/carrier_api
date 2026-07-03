@@ -44,6 +44,8 @@ def _align_manual_status_setpoints_with_config(system: System, zone: dict[str, A
     if "id" not in zone:
         return
     zone_id = str(zone["id"])
+    if "hold" in zone and zone["hold"] != "on":
+        return
 
     incoming_heat_set_point = _float_set_point(zone.get("htsp"))
     incoming_cool_set_point = _float_set_point(zone.get("clsp"))
