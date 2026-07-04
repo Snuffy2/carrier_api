@@ -355,6 +355,7 @@ async def _send_zone_config(
     hold_activity: str | None = "manual",
     heat_set_point: float = DEFAULT_MANUAL_SETPOINTS[0],
     cool_set_point: float = DEFAULT_MANUAL_SETPOINTS[1],
+    timestamp: str | None = None,
 ) -> None:
     """Send a compact manual activity config websocket update.
 
@@ -365,6 +366,7 @@ async def _send_zone_config(
         hold_activity: Raw Carrier hold activity for the zone.
         heat_set_point: Manual activity heat set point.
         cool_set_point: Manual activity cool set point.
+        timestamp: Raw ISO timestamp on the outbound status/config frame.
     """
     await data_updater.message_handler(
         json.dumps(
@@ -376,6 +378,7 @@ async def _send_zone_config(
                         "id": zone_id,
                         "hold": hold,
                         "holdActivity": hold_activity,
+                        **({"timestamp": timestamp} if timestamp is not None else {}),
                         "activities": [
                             {
                                 "id": str(zone_id),
@@ -394,19 +397,27 @@ async def _send_zone_config(
 async def _send_zone_status(
     data_updater: WebsocketDataUpdater,
     zone_update: dict[str, Any],
+    *,
+    timestamp: str | None = None,
 ) -> None:
     """Send a compact zone status websocket update.
 
     Args:
         data_updater: Websocket updater under test.
         zone_update: Raw status zone fragment to send.
+        timestamp: Raw ISO timestamp on the outbound status frame.
     """
     await data_updater.message_handler(
         json.dumps(
             {
                 "messageType": "InfinityStatus",
                 "deviceId": TEST_DEVICE_ID,
-                "zones": [zone_update],
+                "zones": [
+                    {
+                        **zone_update,
+                        **({"timestamp": timestamp} if timestamp is not None else {}),
+                    }
+                ],
             }
         )
     )
@@ -766,6 +777,76 @@ async def test_status_zone_manual_activity_config_update_keeps_replay_after_loca
     await _send_zone_config(data_updater)
 
     assert TEST_REPLAY_KEY in data_updater._manual_status_replays
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_stale_config_timestamp_does_not_update_replay(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Handle newer status then delayed manual config without rolling status back."""
+    assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
+
+    await _send_zone_status(
+        data_updater,
+        _manual_status_update(heat_set_point=70.0, cool_set_point=80.0),
+        timestamp="2026-07-04T15:00:00.000Z",
+    )
+    _assert_zone_setpoints(carrier_system, 70.0, 80.0)
+    assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
+
+    await _send_zone_config(
+        data_updater,
+        heat_set_point=65.0,
+        cool_set_point=75.0,
+        timestamp="2026-07-04T14:00:00.000Z",
+    )
+    assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
+
+    await _send_zone_status(
+        data_updater,
+        _manual_status_update(heat_set_point=70.0, cool_set_point=80.0),
+        timestamp="2026-07-04T15:00:00.000Z",
+    )
+    _assert_zone_setpoints(carrier_system, 70.0, 80.0)
+    assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_stale_status_does_not_lower_high_water_for_config_gate(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Do not lower last-status high-water with delayed status frames."""
+    await _send_zone_status(
+        data_updater,
+        _manual_status_update(heat_set_point=70.0, cool_set_point=80.0),
+        timestamp="2026-07-04T15:00:00.000Z",
+    )
+    assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
+    _assert_zone_setpoints(carrier_system, 70.0, 80.0)
+
+    await _send_zone_status(
+        data_updater,
+        {"id": TEST_ZONE_ID, "rh": 40},
+        timestamp="2026-07-04T14:00:00.000Z",
+    )
+
+    await _send_zone_config(
+        data_updater,
+        heat_set_point=65.0,
+        cool_set_point=75.0,
+        timestamp="2026-07-04T14:00:00.000Z",
+    )
+    assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
+    _assert_zone_setpoints(carrier_system, 70.0, 80.0)
+
+    await _send_zone_status(
+        data_updater,
+        _manual_status_update(heat_set_point=70.0, cool_set_point=80.0),
+        timestamp="2026-07-04T15:00:00.000Z",
+    )
+    _assert_zone_setpoints(carrier_system, 70.0, 80.0)
 
 
 @pytest.mark.asyncio

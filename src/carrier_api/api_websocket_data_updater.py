@@ -19,6 +19,23 @@ SetPointPair = tuple[float, float]
 ManualReplay = tuple[list[SetPointPair], SetPointPair]
 
 
+def _parse_websocket_timestamp(value: Any) -> datetime | None:
+    """Parse an ISO-8601 websocket timestamp into an aware datetime."""
+    if not isinstance(value, str):
+        return None
+
+    timestamp = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return None
+
+    if parsed.tzinfo is None:
+        return None
+
+    return parsed
+
+
 def _normalize_hold_value(value: Any) -> Any:
     """Normalize Carrier hold values before they are merged into raw payloads."""
     if isinstance(value, bool):
@@ -261,6 +278,7 @@ class WebsocketDataUpdater:
         """
         self.systems = systems
         self._manual_status_replays: dict[tuple[str, str], ManualReplay] = {}
+        self._last_status_timestamps: dict[tuple[str, str], datetime] = {}
 
     def carrier_system(self, serial_id: str) -> System:
         """Return the loaded system with the requested serial number.
@@ -306,7 +324,7 @@ class WebsocketDataUpdater:
                 _LOGGER.debug("InfinityStatus received: %s", websocket_message)
                 zones = websocket_message_json.pop("zones", [])
                 for zone in zones:
-                    _timestamp = zone.pop("timestamp", None)
+                    zone_timestamp = _parse_websocket_timestamp(zone.pop("timestamp", None))
                     if "id" not in zone:
                         continue
                     zone_id = str(zone["id"])
@@ -323,6 +341,10 @@ class WebsocketDataUpdater:
                     )
                     _drop_non_finite_setpoints(zone)
                     always_merger.merge(stale_zone, zone)
+                    if zone_timestamp is not None:
+                        last_status_timestamp = self._last_status_timestamps.get(replay_key)
+                        if last_status_timestamp is None or zone_timestamp > last_status_timestamp:
+                            self._last_status_timestamps[replay_key] = zone_timestamp
                     self._clear_manual_replay(replay_key, zone, aligned)
                 merged_status = always_merger.merge(system.status.raw, websocket_message_json)
                 merged_status.update({"utcTime": datetime.now(UTC).isoformat()})
@@ -333,7 +355,7 @@ class WebsocketDataUpdater:
                 _LOGGER.debug("InfinityConfig received: %s", websocket_message)
                 zones = websocket_message_json.pop("zones", [])
                 for zone in zones:
-                    _timestamp = zone.pop("timestamp", None)
+                    zone_timestamp = _parse_websocket_timestamp(zone.pop("timestamp", None))
                     if "id" not in zone:
                         continue
                     zone_id = zone["id"]
@@ -366,6 +388,13 @@ class WebsocketDataUpdater:
                             continue
                         always_merger.merge(stale_activity, activity)
                     always_merger.merge(stale_zone, zone)
+                    last_status_timestamp = self._last_status_timestamps.get(
+                        (serial_id, str(zone_id))
+                    )
+                    if zone_timestamp is not None and (
+                        last_status_timestamp is not None and zone_timestamp < last_status_timestamp
+                    ):
+                        continue
                     self._update_manual_replay_candidate(
                         replay_key=(serial_id, str(zone_id)),
                         zone=stale_zone,
