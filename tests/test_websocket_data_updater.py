@@ -526,16 +526,10 @@ async def test_status_zone_manual_activity_uses_config_setpoints_when_status_lag
 
     await _send_zone_status(
         data_updater,
-        {
-            "id": 1,
-            "currentActivity": "manual",
-            "hold": "on",
-            "htsp": 74,
-            "clsp": 78,
-        },
+        _manual_status_update(),
     )
 
-    _assert_zone_setpoints(carrier_system, 65, 75)
+    _assert_zone_setpoints(carrier_system, *DEFAULT_MANUAL_SETPOINTS)
 
 
 @pytest.mark.asyncio
@@ -549,14 +543,14 @@ async def test_status_zone_manual_activity_uses_config_setpoints_without_current
     await _send_zone_status(
         data_updater,
         {
-            "id": 1,
+            "id": TEST_ZONE_ID,
             "hold": "on",
-            "htsp": 74,
-            "clsp": 78,
+            "htsp": DEFAULT_STATUS_SETPOINTS[0],
+            "clsp": DEFAULT_STATUS_SETPOINTS[1],
         },
     )
 
-    _assert_zone_setpoints(carrier_system, 65, 75)
+    _assert_zone_setpoints(carrier_system, *DEFAULT_MANUAL_SETPOINTS)
 
 
 @pytest.mark.asyncio
@@ -602,14 +596,13 @@ async def test_status_zone_manual_activity_only_payload_uses_config_setpoints(
 
     await _send_zone_status(
         data_updater,
-        {
-            "id": 1,
-            "currentActivity": "manual",
-            "hold": "on",
-        },
+        _manual_status_update(
+            heat_set_point=OMIT_SETPOINT,
+            cool_set_point=OMIT_SETPOINT,
+        ),
     )
 
-    _assert_zone_setpoints(carrier_system, 65, 75)
+    _assert_zone_setpoints(carrier_system, *DEFAULT_MANUAL_SETPOINTS)
 
 
 @pytest.mark.asyncio
@@ -627,25 +620,25 @@ async def test_status_zone_manual_activity_replay_is_single_use_after_correction
     stale_status = _manual_status_update()
 
     await _send_zone_status(data_updater, stale_status)
-    _assert_zone_setpoints(carrier_system, 65, 75)
+    _assert_zone_setpoints(carrier_system, *DEFAULT_MANUAL_SETPOINTS)
 
     await _send_zone_status(data_updater, stale_status)
-    _assert_zone_setpoints(carrier_system, 65, 75)
+    _assert_zone_setpoints(carrier_system, *DEFAULT_MANUAL_SETPOINTS)
 
     await _send_zone_status(
         data_updater,
         {
-            "id": 1,
+            "id": TEST_ZONE_ID,
             "currentActivity": "manual",
             "hold": "on",
-            "htsp": 65,
-            "clsp": 75,
+            "htsp": DEFAULT_MANUAL_SETPOINTS[0],
+            "clsp": DEFAULT_MANUAL_SETPOINTS[1],
         },
     )
-    _assert_zone_setpoints(carrier_system, 65, 75)
+    _assert_zone_setpoints(carrier_system, *DEFAULT_MANUAL_SETPOINTS)
 
     await _send_zone_status(data_updater, stale_status)
-    _assert_zone_setpoints(carrier_system, 74, 78)
+    _assert_zone_setpoints(carrier_system, *DEFAULT_STATUS_SETPOINTS)
 
 
 @pytest.mark.asyncio
@@ -668,7 +661,7 @@ async def test_status_zone_manual_activity_full_pair_matching_manual_setpoints_c
     )
 
     assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
-    _assert_zone_setpoints(carrier_system, 65, 75)
+    _assert_zone_setpoints(carrier_system, *DEFAULT_MANUAL_SETPOINTS)
 
 
 @pytest.mark.asyncio
@@ -684,7 +677,7 @@ async def test_status_zone_manual_activity_partial_status_disproves_replay_only_
         _manual_status_update(heat_set_point=73, cool_set_point=OMIT_SETPOINT),
     )
     assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
-    _assert_zone_setpoints(carrier_system, 73, 78)
+    _assert_zone_setpoints(carrier_system, 73, DEFAULT_STATUS_SETPOINTS[1])
 
     _seed_manual_replay(data_updater)
     await _send_zone_status(
@@ -693,7 +686,7 @@ async def test_status_zone_manual_activity_partial_status_disproves_replay_only_
     )
 
     assert TEST_REPLAY_KEY in data_updater._manual_status_replays
-    _assert_zone_setpoints(carrier_system, 73, 78)
+    _assert_zone_setpoints(carrier_system, 73, DEFAULT_STATUS_SETPOINTS[1])
 
 
 @pytest.mark.asyncio
@@ -706,9 +699,14 @@ async def test_status_zone_manual_activity_preserves_multiple_stale_pairs_across
 
     await _send_zone_status(
         data_updater,
-        {"id": 1, "currentActivity": "manual", "hold": "on", "htsp": 74},
+        {
+            "id": TEST_ZONE_ID,
+            "currentActivity": "manual",
+            "hold": "on",
+            "htsp": DEFAULT_STATUS_SETPOINTS[0],
+        },
     )
-    assert carrier_system.status.zones[0].cool_set_point == 78
+    assert carrier_system.status.zones[0].cool_set_point == DEFAULT_STATUS_SETPOINTS[1]
 
     await _send_zone_config(
         data_updater,
@@ -718,7 +716,7 @@ async def test_status_zone_manual_activity_preserves_multiple_stale_pairs_across
 
     await _send_zone_status(
         data_updater,
-        {"id": 1, "currentActivity": "manual", "hold": "on", "htsp": 74, "clsp": 78},
+        _manual_status_update(),
     )
     _assert_zone_setpoints(carrier_system, 66, 76)
 
@@ -767,18 +765,12 @@ async def test_status_zone_manual_activity_with_incoming_hold_off_keeps_incoming
 
     await _send_zone_status(
         data_updater,
-        {
-            "id": 1,
-            "currentActivity": "manual",
-            "hold": "off",
-            "htsp": 74,
-            "clsp": 78,
-        },
+        _manual_status_update(hold="off"),
     )
 
     assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.MANUAL
     assert carrier_system.status.zones[0].hold is False
-    _assert_zone_setpoints(carrier_system, 74, 78)
+    _assert_zone_setpoints(carrier_system, *DEFAULT_STATUS_SETPOINTS)
 
 
 @pytest.mark.asyncio
@@ -793,18 +785,18 @@ async def test_status_zone_manual_activity_invalid_config_clears_stale_replay_st
         json.dumps(
             {
                 "messageType": "InfinityConfig",
-                "deviceId": "SERIALXXX",
+                "deviceId": TEST_DEVICE_ID,
                 "zones": [
                     {
-                        "id": 1,
+                        "id": TEST_ZONE_ID,
                         "hold": "on",
                         "holdActivity": "manual",
                         "activities": [
                             {
-                                "id": "1",
+                                "id": str(TEST_ZONE_ID),
                                 "type": "manual",
                                 "htsp": "not-a-number",
-                                "clsp": 75,
+                                "clsp": DEFAULT_MANUAL_SETPOINTS[1],
                             }
                         ],
                     }
@@ -815,16 +807,10 @@ async def test_status_zone_manual_activity_invalid_config_clears_stale_replay_st
 
     await _send_zone_status(
         data_updater,
-        {
-            "id": 1,
-            "currentActivity": "manual",
-            "hold": "on",
-            "htsp": 74,
-            "clsp": 78,
-        },
+        _manual_status_update(),
     )
 
-    _assert_zone_setpoints(carrier_system, 74, 78)
+    _assert_zone_setpoints(carrier_system, *DEFAULT_STATUS_SETPOINTS)
 
 
 @pytest.mark.asyncio
@@ -861,17 +847,11 @@ async def test_status_zone_manual_activity_ignores_stale_status_when_config_hold
 
     await _send_zone_status(
         data_updater,
-        {
-            "id": 1,
-            "currentActivity": "manual",
-            "hold": "on",
-            "htsp": 74,
-            "clsp": 78,
-        },
+        _manual_status_update(),
     )
 
     assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.MANUAL
-    _assert_zone_setpoints(carrier_system, 74, 78)
+    _assert_zone_setpoints(carrier_system, *DEFAULT_STATUS_SETPOINTS)
 
 
 @pytest.mark.asyncio

@@ -360,7 +360,8 @@ class WebsocketDataUpdater:
         stale_set_points, manual_pair = replay
         if aligned:
             return
-        if _raw_set_point_pair(zone) == manual_pair:
+        incoming_pair = _raw_set_point_pair(zone)
+        if incoming_pair == manual_pair:
             self._clear_replay_state(replay_key)
             return
         if zone.get("hold") not in (None, "on"):
@@ -369,7 +370,6 @@ class WebsocketDataUpdater:
         if "currentActivity" in zone and zone["currentActivity"] != ActivityTypes.MANUAL.value:
             self._clear_replay_state(replay_key)
             return
-        incoming_pair = _raw_set_point_pair(zone)
         if incoming_pair is None:
             incoming_heat_set_point = _float_set_point(zone.get("htsp"))
             incoming_cool_set_point = _float_set_point(zone.get("clsp"))
