@@ -24,6 +24,33 @@ def _is_hold_on(value: Any) -> bool:
     return value in ("on", True, 1)
 
 
+def _normalize_hold_value(value: Any) -> Any:
+    """Normalize Carrier hold values before they are merged into raw payloads."""
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    if isinstance(value, int):
+        if value == 1:
+            return "on"
+        if value == 0:
+            return "off"
+    return value
+
+
+def _normalize_zone_hold(zone: dict[str, Any]) -> None:
+    """Normalize accepted hold values in a zone payload."""
+    if "hold" in zone:
+        zone["hold"] = _normalize_hold_value(zone["hold"])
+
+
+def _is_manual_config_hold(zone: dict[str, Any]) -> bool:
+    """Return whether a config payload represents manual hold."""
+    if zone.get("holdActivity") != ActivityTypes.MANUAL.value:
+        return False
+    if "hold" not in zone:
+        return True
+    return _is_hold_on(zone.get("hold"))
+
+
 def find_by_id(collection: list[dict], item_id: str) -> dict:
     """Find an item in a Carrier payload collection by id.
 
@@ -85,10 +112,7 @@ def _align_manual_status_setpoints_with_config(
         if incoming_activity_value is not None
         else _activity_type(raw_status_zone.get("currentActivity")) is ActivityTypes.MANUAL
     )
-    config_is_manual = (
-        _is_hold_on(config_zone.get("hold"))
-        and config_zone.get("holdActivity") == ActivityTypes.MANUAL.value
-    )
+    config_is_manual = _is_manual_config_hold(config_zone)
     if not status_is_manual and not config_is_manual:
         return False
 
@@ -250,6 +274,7 @@ class WebsocketDataUpdater:
                     if "id" not in zone:
                         continue
                     zone_id = str(zone["id"])
+                    _normalize_zone_hold(zone)
                     replay_key = (serial_id, zone_id)
                     try:
                         stale_zone = find_by_id(system.status.raw["zones"], zone["id"])
@@ -273,29 +298,44 @@ class WebsocketDataUpdater:
                 zones = websocket_message_json.pop("zones", [])
                 for zone in zones:
                     _timestamp = zone.pop("timestamp", None)
-                    if "id" in zone:
-                        zone_id = zone["id"]
+                    if "id" not in zone:
+                        continue
+                    zone_id = zone["id"]
+                    _normalize_zone_hold(zone)
+                    try:
                         stale_zone = find_by_id(system.config.raw["zones"], zone_id)
+                    except ValueError:
+                        continue
+                    try:
+                        status_zone = find_by_id(system.status.raw["zones"], zone_id)
+                    except ValueError:
+                        status_zone = None
+                    previous_status_set_points = (
+                        _raw_set_point_pair(status_zone) if status_zone is not None else None
+                    )
+                    activities = zone.pop("activities", [])
+                    hold_activity_only = (
+                        "hold" not in zone
+                        and zone.get("holdActivity") == ActivityTypes.MANUAL.value
+                    )
+                    for activity in activities:
+                        _timestamp = activity.pop("timestamp", None)
+                        _zone_configuration_id = activity.pop("zoneConfigurationId", None)
+                        _fan_setting_id = activity.pop("fanSettingId", None)
+                        if "id" not in activity:
+                            continue
                         try:
-                            status_zone = find_by_id(system.status.raw["zones"], zone_id)
-                        except ValueError:
-                            status_zone = None
-                        previous_status_set_points = (
-                            _raw_set_point_pair(status_zone) if status_zone is not None else None
-                        )
-                        activities = zone.pop("activities", [])
-                        for activity in activities:
-                            _timestamp = activity.pop("timestamp", None)
-                            _zone_configuration_id = activity.pop("zoneConfigurationId", None)
-                            _fan_setting_id = activity.pop("fanSettingId", None)
                             stale_activity = find_by_id(stale_zone["activities"], activity["id"])
-                            always_merger.merge(stale_activity, activity)
-                        always_merger.merge(stale_zone, zone)
-                        self._update_manual_replay_candidate(
-                            replay_key=(serial_id, str(zone_id)),
-                            zone=stale_zone,
-                            previous_status_set_points=previous_status_set_points,
-                        )
+                        except ValueError:
+                            continue
+                        always_merger.merge(stale_activity, activity)
+                    always_merger.merge(stale_zone, zone)
+                    self._update_manual_replay_candidate(
+                        replay_key=(serial_id, str(zone_id)),
+                        zone=stale_zone,
+                        previous_status_set_points=previous_status_set_points,
+                        allow_incoming_manual_hold_only=hold_activity_only,
+                    )
                 always_merger.merge(system.config.raw, websocket_message_json)
                 system.config = Config(system.config.raw)
             case _:
@@ -356,6 +396,7 @@ class WebsocketDataUpdater:
         replay_key: tuple[str, str],
         zone: dict[str, Any],
         previous_status_set_points: SetPointPair | None,
+        allow_incoming_manual_hold_only: bool = False,
     ) -> None:
         """Track the status set points that can be replayed after manual config.
 
@@ -363,9 +404,14 @@ class WebsocketDataUpdater:
             replay_key: System serial and zone ID key for candidate tracking.
             zone: Merged raw config zone payload.
             previous_status_set_points: Status set points before the config merge.
+            allow_incoming_manual_hold_only: Whether the incoming config payload
+                omitted ``hold`` but explicitly selected manual hold activity.
         """
         manual_set_points: SetPointPair | None = None
-        if _is_hold_on(zone.get("hold")) and zone.get("holdActivity") == ActivityTypes.MANUAL.value:
+        is_manual_config_hold = _is_manual_config_hold(zone)
+        if not is_manual_config_hold and allow_incoming_manual_hold_only:
+            is_manual_config_hold = zone.get("holdActivity") == ActivityTypes.MANUAL.value
+        if is_manual_config_hold:
             manual_activity = next(
                 (
                     activity
@@ -383,7 +429,10 @@ class WebsocketDataUpdater:
         if (
             manual_set_points is None
             or previous_status_set_points is None
-            or previous_status_set_points == manual_set_points
+            or (
+                previous_status_set_points == manual_set_points
+                and replay_key not in self._manual_status_replays
+            )
         ):
             self._manual_status_replays.pop(replay_key, None)
             return

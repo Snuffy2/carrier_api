@@ -693,6 +693,45 @@ async def test_status_zone_manual_activity_partial_status_disproves_replay_only_
 
 
 @pytest.mark.asyncio
+async def test_status_zone_manual_activity_config_update_keeps_replay_after_local_status_correction(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Do not clear replay for config updates that observe local status correction."""
+    _seed_manual_replay(data_updater)
+    carrier_system.status.raw["zones"][0].update(
+        {
+            "htsp": DEFAULT_MANUAL_SETPOINTS[0],
+            "clsp": DEFAULT_MANUAL_SETPOINTS[1],
+        }
+    )
+    carrier_system.status = Status(raw=carrier_system.status.raw)
+
+    await _send_zone_config(data_updater)
+
+    assert TEST_REPLAY_KEY in data_updater._manual_status_replays
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_config_update_does_not_arm_when_status_already_matches(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Do not create replay state when status already has the manual set points."""
+    carrier_system.status.raw["zones"][0].update(
+        {
+            "htsp": DEFAULT_MANUAL_SETPOINTS[0],
+            "clsp": DEFAULT_MANUAL_SETPOINTS[1],
+        }
+    )
+    carrier_system.status = Status(raw=carrier_system.status.raw)
+
+    await _send_zone_config(data_updater)
+
+    assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
+
+
+@pytest.mark.asyncio
 async def test_status_zone_manual_activity_preserves_multiple_stale_pairs_across_updates(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
@@ -777,6 +816,26 @@ async def test_status_zone_manual_activity_with_incoming_hold_off_keeps_incoming
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status_hold", [True, 1])
+async def test_status_zone_update_normalizes_hold_for_status_model(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+    status_hold: bool | int,
+) -> None:
+    """Normalize boolean and numeric hold values before rebuilding status zones."""
+    await _send_zone_status(
+        data_updater,
+        {
+            "id": TEST_ZONE_ID,
+            "currentActivity": "manual",
+            "hold": status_hold,
+        },
+    )
+
+    assert carrier_system.status.zones[0].hold is True
+
+
+@pytest.mark.asyncio
 async def test_status_zone_manual_activity_invalid_config_clears_stale_replay_state(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
@@ -817,6 +876,32 @@ async def test_status_zone_manual_activity_invalid_config_clears_stale_replay_st
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("websocket_message_str", ["messages/config_zone_hold.json"], indirect=True)
+async def test_config_zone_hold_only_message_arms_manual_replay(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+    websocket_message_str: str,
+) -> None:
+    """Arm manual replay when config hold frames omit a hold value."""
+    assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
+
+    await data_updater.message_handler(websocket_message_str)
+    await _send_zone_status(
+        data_updater,
+        _manual_status_update(),
+    )
+
+    manual_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.MANUAL)
+    assert manual_activity is not None
+    _assert_zone_setpoints(
+        carrier_system,
+        manual_activity.heat_set_point,
+        manual_activity.cool_set_point,
+    )
+    assert TEST_REPLAY_KEY in data_updater._manual_status_replays
+
+
+@pytest.mark.asyncio
 async def test_infinity_config_with_missing_status_zone_keeps_updater_stable(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
@@ -833,6 +918,93 @@ async def test_infinity_config_with_missing_status_zone_keeps_updater_stable(
 
     assert [str(zone["id"]) for zone in carrier_system.status.raw["zones"]] == status_zone_ids
     assert carrier_system.config.zones[0].hold_activity == ActivityTypes.MANUAL
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("config_hold", [True, 1])
+async def test_infinity_config_normalizes_hold_for_config_model(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+    config_hold: bool | int,
+) -> None:
+    """Normalize boolean and numeric hold values before rebuilding config zones."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": TEST_DEVICE_ID,
+                "zones": [
+                    {
+                        "id": TEST_ZONE_ID,
+                        "hold": config_hold,
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": str(TEST_ZONE_ID),
+                                "type": "manual",
+                                "htsp": DEFAULT_MANUAL_SETPOINTS[0],
+                                "clsp": DEFAULT_MANUAL_SETPOINTS[1],
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.config.zones[0].hold is True
+    manual_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.MANUAL)
+    assert manual_activity is not None
+    assert (
+        manual_activity.heat_set_point,
+        manual_activity.cool_set_point,
+    ) == DEFAULT_MANUAL_SETPOINTS
+
+
+@pytest.mark.asyncio
+async def test_infinity_config_skips_missing_zone_and_activity_ids(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Skip missing config zone/activity ids while applying valid updates."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": TEST_DEVICE_ID,
+                "zones": [
+                    {
+                        "id": "missing-zone",
+                        "hold": "on",
+                        "holdActivity": "manual",
+                    },
+                    {
+                        "id": TEST_ZONE_ID,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "activities": [
+                            {
+                                "id": "missing-activity",
+                                "htsp": 63,
+                                "clsp": 77,
+                            },
+                            {
+                                "id": str(TEST_ZONE_ID),
+                                "type": "manual",
+                                "htsp": 66,
+                                "clsp": 76,
+                            },
+                        ],
+                    },
+                ],
+            }
+        )
+    )
+
+    assert carrier_system.config.zones[0].hold_activity == ActivityTypes.MANUAL
+    manual_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.MANUAL)
+    assert manual_activity is not None
+    assert (manual_activity.heat_set_point, manual_activity.cool_set_point) == (66.0, 76.0)
 
 
 @pytest.mark.asyncio
