@@ -279,6 +279,7 @@ class WebsocketDataUpdater:
         self.systems = systems
         self._manual_status_replays: dict[tuple[str, str], ManualReplay] = {}
         self._last_status_timestamps: dict[tuple[str, str], datetime] = {}
+        self._last_config_timestamps: dict[tuple[str, str], datetime] = {}
 
     def carrier_system(self, serial_id: str) -> System:
         """Return the loaded system with the requested serial number.
@@ -359,6 +360,12 @@ class WebsocketDataUpdater:
                     if "id" not in zone:
                         continue
                     zone_id = zone["id"]
+                    replay_key = (serial_id, str(zone_id))
+                    if self._is_stale_config_zone_timestamp(
+                        replay_key=replay_key,
+                        zone_timestamp=zone_timestamp,
+                    ):
+                        continue
                     _normalize_zone_hold(zone)
                     try:
                         stale_zone = find_by_id(system.config.raw["zones"], zone_id)
@@ -388,23 +395,48 @@ class WebsocketDataUpdater:
                             continue
                         always_merger.merge(stale_activity, activity)
                     always_merger.merge(stale_zone, zone)
-                    last_status_timestamp = self._last_status_timestamps.get(
-                        (serial_id, str(zone_id))
-                    )
-                    if zone_timestamp is not None and (
-                        last_status_timestamp is not None and zone_timestamp < last_status_timestamp
-                    ):
-                        continue
                     self._update_manual_replay_candidate(
                         replay_key=(serial_id, str(zone_id)),
                         zone=stale_zone,
                         previous_status_set_points=previous_status_set_points,
                         allow_incoming_manual_hold_only=hold_activity_only,
                     )
+                    self._update_config_watermark(
+                        replay_key=replay_key,
+                        zone_timestamp=zone_timestamp,
+                    )
                 always_merger.merge(system.config.raw, websocket_message_json)
                 system.config = Config(system.config.raw)
             case _:
                 _LOGGER.error("Received unknown message: %s", websocket_message)
+
+    def _is_stale_config_zone_timestamp(
+        self,
+        *,
+        replay_key: tuple[str, str],
+        zone_timestamp: datetime | None,
+    ) -> bool:
+        """Return ``True`` when a config frame is older than status/config high-water."""
+        if zone_timestamp is None:
+            return False
+        last_status_timestamp = self._last_status_timestamps.get(replay_key)
+        if last_status_timestamp is not None and zone_timestamp < last_status_timestamp:
+            return True
+        last_config_timestamp = self._last_config_timestamps.get(replay_key)
+        return last_config_timestamp is not None and zone_timestamp < last_config_timestamp
+
+    def _update_config_watermark(
+        self,
+        *,
+        replay_key: tuple[str, str],
+        zone_timestamp: datetime | None,
+    ) -> None:
+        """Record the newest config frame timestamp for a zone when available."""
+        if zone_timestamp is None:
+            return
+        last_config_timestamp = self._last_config_timestamps.get(replay_key)
+        if last_config_timestamp is None or zone_timestamp > last_config_timestamp:
+            self._last_config_timestamps[replay_key] = zone_timestamp
 
     def _clear_manual_replay(
         self,

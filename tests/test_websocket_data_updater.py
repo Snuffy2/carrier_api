@@ -785,6 +785,13 @@ async def test_status_zone_manual_activity_stale_config_timestamp_does_not_updat
     carrier_system: System,
 ) -> None:
     """Handle newer status then delayed manual config without rolling status back."""
+    initial_manual_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.MANUAL)
+    initial_manual_setpoints = (
+        (initial_manual_activity.heat_set_point, initial_manual_activity.cool_set_point)
+        if initial_manual_activity is not None
+        else None
+    )
+    initial_hold_activity = carrier_system.config.zones[0].hold_activity
     assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
 
     await _send_zone_status(
@@ -801,6 +808,14 @@ async def test_status_zone_manual_activity_stale_config_timestamp_does_not_updat
         cool_set_point=75.0,
         timestamp="2026-07-04T14:00:00.000Z",
     )
+    final_manual_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.MANUAL)
+    final_manual_setpoints = (
+        (final_manual_activity.heat_set_point, final_manual_activity.cool_set_point)
+        if final_manual_activity is not None
+        else None
+    )
+    assert carrier_system.config.zones[0].hold_activity == initial_hold_activity
+    assert final_manual_setpoints == initial_manual_setpoints
     assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
 
     await _send_zone_status(
@@ -810,6 +825,44 @@ async def test_status_zone_manual_activity_stale_config_timestamp_does_not_updat
     )
     _assert_zone_setpoints(carrier_system, 70.0, 80.0)
     assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
+
+
+@pytest.mark.asyncio
+async def test_infinity_config_stale_after_status_no_prior_config_watermark(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Status high-water should block older config frames before config merge."""
+    initial_manual_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.MANUAL)
+    initial_manual_setpoints = (
+        (initial_manual_activity.heat_set_point, initial_manual_activity.cool_set_point)
+        if initial_manual_activity is not None
+        else None
+    )
+    initial_hold_activity = carrier_system.config.zones[0].hold_activity
+
+    await _send_zone_status(
+        data_updater,
+        _manual_status_update(heat_set_point=70.0, cool_set_point=80.0),
+        timestamp="2026-07-04T15:00:00.000Z",
+    )
+
+    await _send_zone_config(
+        data_updater,
+        heat_set_point=66.0,
+        cool_set_point=76.0,
+        timestamp="2026-07-04T14:00:00.000Z",
+    )
+
+    final_manual_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.MANUAL)
+    final_manual_setpoints = (
+        (final_manual_activity.heat_set_point, final_manual_activity.cool_set_point)
+        if final_manual_activity is not None
+        else None
+    )
+
+    assert carrier_system.config.zones[0].hold_activity == initial_hold_activity
+    assert final_manual_setpoints == initial_manual_setpoints
 
 
 @pytest.mark.asyncio
@@ -847,6 +900,66 @@ async def test_status_zone_manual_activity_stale_status_does_not_lower_high_wate
         timestamp="2026-07-04T15:00:00.000Z",
     )
     _assert_zone_setpoints(carrier_system, 70.0, 80.0)
+
+
+@pytest.mark.asyncio
+async def test_infinity_config_stale_frame_with_newer_status_does_not_roll_back_config(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Ignore config zone updates older than latest manual status timestamp for config replay."""
+    await _send_zone_config(
+        data_updater,
+        heat_set_point=66.0,
+        cool_set_point=76.0,
+        timestamp="2026-07-04T15:00:00.000Z",
+    )
+
+    await _send_zone_status(
+        data_updater,
+        _manual_status_update(heat_set_point=70.0, cool_set_point=80.0),
+        timestamp="2026-07-04T15:00:30.000Z",
+    )
+
+    await _send_zone_config(
+        data_updater,
+        heat_set_point=65.0,
+        cool_set_point=75.0,
+        timestamp="2026-07-04T14:00:00.000Z",
+    )
+
+    manual_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.MANUAL)
+    assert manual_activity is not None
+    assert (manual_activity.heat_set_point, manual_activity.cool_set_point) == (66.0, 76.0)
+    assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
+
+
+@pytest.mark.asyncio
+async def test_infinity_config_out_of_order_without_status_does_not_rewrite_config(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Keep newer config manual setpoints when an older config frame arrives later."""
+    assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
+    await _send_zone_config(
+        data_updater,
+        heat_set_point=66.0,
+        cool_set_point=76.0,
+        timestamp="2026-07-04T15:00:00.000Z",
+    )
+    replay_before = data_updater._manual_status_replays[TEST_REPLAY_KEY]
+
+    await _send_zone_config(
+        data_updater,
+        heat_set_point=65.0,
+        cool_set_point=75.0,
+        timestamp="2026-07-04T14:00:00.000Z",
+    )
+
+    manual_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.MANUAL)
+    assert manual_activity is not None
+    assert (manual_activity.heat_set_point, manual_activity.cool_set_point) == (66.0, 76.0)
+    assert data_updater._manual_status_replays[TEST_REPLAY_KEY] == replay_before
 
 
 @pytest.mark.asyncio
