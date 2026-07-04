@@ -720,8 +720,8 @@ async def test_status_zone_manual_activity_partial_status_disproves_replay_only_
             "htsp": 73,
         },
     )
-    assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
-    _assert_zone_setpoints(carrier_system, 73, DEFAULT_STATUS_SETPOINTS[1])
+    assert TEST_REPLAY_KEY in data_updater._manual_status_replays
+    _assert_zone_setpoints(carrier_system, 73, DEFAULT_MANUAL_SETPOINTS[1])
 
     _seed_manual_replay(data_updater)
     await _send_zone_status(
@@ -731,6 +731,27 @@ async def test_status_zone_manual_activity_partial_status_disproves_replay_only_
 
     assert TEST_REPLAY_KEY in data_updater._manual_status_replays
     _assert_zone_setpoints(carrier_system, 73, DEFAULT_STATUS_SETPOINTS[1])
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_partial_status_disproves_replay_only_on_cool_side(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Backfill missing heat set point when only cool arrives in manual status."""
+    _seed_manual_replay(data_updater)
+
+    await _send_zone_status(
+        data_updater,
+        {
+            "id": TEST_ZONE_ID,
+            "currentActivity": "manual",
+            "hold": "on",
+            "clsp": 73,
+        },
+    )
+    assert TEST_REPLAY_KEY in data_updater._manual_status_replays
+    _assert_zone_setpoints(carrier_system, DEFAULT_MANUAL_SETPOINTS[0], 73)
 
 
 @pytest.mark.asyncio
@@ -1056,7 +1077,7 @@ async def test_status_zone_manual_activity_preserves_multiple_stale_pairs_across
             "htsp": DEFAULT_STATUS_SETPOINTS[0],
         },
     )
-    assert carrier_system.status.zones[0].cool_set_point == DEFAULT_STATUS_SETPOINTS[1]
+    assert carrier_system.status.zones[0].cool_set_point == DEFAULT_MANUAL_SETPOINTS[1]
 
     await _send_zone_config(
         data_updater,

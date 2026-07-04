@@ -167,7 +167,6 @@ def _align_manual_status_setpoints_with_config(
         zone["clsp"] = manual_set_points[1] if incoming_cool_is_stale else incoming_cool_set_point
         if zone["htsp"] == incoming_heat_set_point and zone["clsp"] == incoming_cool_set_point:
             return False
-
         _LOGGER.debug(
             "Replacing stale manual status set points for zone %s: raw=%s/%s, local=%s/%s",
             zone["id"],
@@ -177,15 +176,29 @@ def _align_manual_status_setpoints_with_config(
             zone["clsp"],
         )
         return True
-    if (
-        "htsp" in zone
-        or "clsp" in zone
-        or not incoming_manual_signal
-        or _raw_set_point_pair(raw_status_zone) not in stale_set_points
-    ):
+
+    if not incoming_manual_signal or _raw_set_point_pair(raw_status_zone) not in stale_set_points:
         return False
 
-    zone["htsp"], zone["clsp"] = manual_set_points
+    incoming_heat_is_valid = "htsp" in zone and _float_set_point(zone.get("htsp")) is not None
+    incoming_cool_is_valid = "clsp" in zone and _float_set_point(zone.get("clsp")) is not None
+    if incoming_heat_is_valid and incoming_cool_is_valid:
+        return False
+
+    if incoming_heat_is_valid:
+        zone["clsp"] = manual_set_points[1]
+        zone["htsp"] = incoming_heat_set_point
+    else:
+        zone["htsp"] = manual_set_points[0]
+        zone["clsp"] = manual_set_points[1]
+    if incoming_cool_is_valid:
+        zone["clsp"] = incoming_cool_set_point
+        if not incoming_heat_is_valid:
+            zone["htsp"] = manual_set_points[0]
+
+    if zone["htsp"] == incoming_heat_set_point and zone["clsp"] == incoming_cool_set_point:
+        return False
+
     _LOGGER.debug(
         "Replacing stale manual status set points for zone %s: raw=%s/%s, local=%s/%s",
         zone["id"],
