@@ -19,11 +19,6 @@ SetPointPair = tuple[float, float]
 ManualReplay = tuple[list[SetPointPair], SetPointPair]
 
 
-def _is_hold_on(value: Any) -> bool:
-    """Return ``True`` when a Carrier hold value indicates an active hold."""
-    return value in ("on", True, 1)
-
-
 def _normalize_hold_value(value: Any) -> Any:
     """Normalize Carrier hold values before they are merged into raw payloads."""
     if isinstance(value, bool):
@@ -48,7 +43,7 @@ def _is_manual_config_hold(zone: dict[str, Any]) -> bool:
         return False
     if "hold" not in zone:
         return True
-    return _is_hold_on(zone.get("hold"))
+    return zone.get("hold") in ("on", True, 1)
 
 
 def find_by_id(collection: list[dict], item_id: str) -> dict:
@@ -94,7 +89,7 @@ def _align_manual_status_setpoints_with_config(
     incoming_hold = zone.get("hold")
     if "currentActivity" in zone and incoming_activity is not ActivityTypes.MANUAL:
         return False
-    if incoming_hold is not None and not _is_hold_on(incoming_hold):
+    if incoming_hold is not None and incoming_hold not in ("on", True, 1):
         return False
 
     try:
@@ -119,7 +114,7 @@ def _align_manual_status_setpoints_with_config(
     incoming_pair = _raw_set_point_pair(zone)
     incoming_manual_signal = _activity_type(
         zone.get("currentActivity")
-    ) is ActivityTypes.MANUAL or _is_hold_on(zone.get("hold"))
+    ) is ActivityTypes.MANUAL or zone.get("hold") in ("on", True, 1)
 
     if incoming_pair is not None:
         if incoming_pair == manual_set_points or incoming_pair not in stale_set_points:
@@ -365,7 +360,7 @@ class WebsocketDataUpdater:
         should_clear = False
         if (
             incoming_pair == manual_pair
-            or (zone.get("hold") is not None and not _is_hold_on(zone.get("hold")))
+            or (zone.get("hold") is not None and zone.get("hold") not in ("on", True, 1))
             or ("currentActivity" in zone and zone["currentActivity"] != ActivityTypes.MANUAL.value)
         ):
             should_clear = True
