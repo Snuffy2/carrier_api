@@ -507,7 +507,7 @@ def test_system_effective_zone_setpoints_use_status_resolved_config_activity(
     system_response: dict[str, Any],
     energy_response: dict[str, Any],
 ) -> None:
-    """Read effective targets from Carrier-reported manual activity config."""
+    """Read effective targets from fresh status values for a manual activity."""
     raw_system = deepcopy(system_response["infinitySystems"][0])
     raw_system["status"]["zones"][0]["currentActivity"] = "manual"
     raw_system["status"]["zones"][0]["htsp"] = "70"
@@ -527,8 +527,30 @@ def test_system_effective_zone_setpoints_use_status_resolved_config_activity(
     )
 
     assert system.effective_zone_setpoints("1") == {
-        "heat_set_point": 66.0,
-        "cool_set_point": 76.0,
+        "heat_set_point": 70.0,
+        "cool_set_point": 80.0,
+    }
+
+
+def test_system_effective_zone_setpoints_prefers_fresh_status_when_matching_other_activity(
+    system_response: dict[str, Any],
+    energy_response: dict[str, Any],
+) -> None:
+    """Use raw status targets when they are fresh and match another activity profile."""
+    raw_system = deepcopy(system_response["infinitySystems"][0])
+    raw_system["status"]["zones"][0]["currentActivity"] = "wake"
+    raw_system["status"]["zones"][0]["htsp"] = "77"
+    raw_system["status"]["zones"][0]["clsp"] = "79"
+    system = System(
+        Profile(raw_system["profile"]),
+        Status(raw_system["status"]),
+        Config(raw_system["config"]),
+        Energy(energy_response["infinityEnergy"]),
+    )
+
+    assert system.effective_zone_setpoints("1") == {
+        "heat_set_point": 77.0,
+        "cool_set_point": 79.0,
     }
 
 
@@ -591,11 +613,12 @@ def test_system_effective_zone_setpoints_prefers_config_for_activity_only_status
     system_response: dict[str, Any],
     energy_response: dict[str, Any],
 ) -> None:
-    """Favor the new current-status activity config when no status setpoints update."""
+    """Favor config activity when stale status setpoints are expected."""
     raw_system = deepcopy(system_response["infinitySystems"][0])
     raw_system["status"]["zones"][0]["currentActivity"] = "home"
     raw_system["status"]["zones"][0]["htsp"] = "74"
     raw_system["status"]["zones"][0]["clsp"] = "78"
+    raw_system["status"]["zones"][0]["_setpointsStaleForActivity"] = True
     system = System(
         Profile(raw_system["profile"]),
         Status(raw_system["status"]),

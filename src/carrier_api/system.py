@@ -4,7 +4,6 @@ from logging import getLogger
 from typing import Any
 
 from .config import Config
-from .const import ActivityTypes
 from .energy import Energy
 from .profile import Profile
 from .status import Status
@@ -104,10 +103,9 @@ class System:
     def effective_zone_setpoints(self, zone_id: str) -> ZoneSetPoints:
         """Return zone target set points with manual-activity config resolution.
 
-        Manual status activity uses config-derived set points when available.
-        Non-manual status activity uses raw status set points unless they match
-        a different configured activity, which indicates an activity-only status
-        update left stale raw targets behind.
+        Raw status set points are used unless a websocket update marked them
+        stale for Carrier's reported current activity. Stale status set points
+        are resolved from the matching config activity when available.
 
         Args:
             zone_id: Carrier zone ID to inspect.
@@ -132,38 +130,8 @@ class System:
         setpoint_source = (
             config_zone.current_status_activity(status_zone) if config_zone is not None else None
         )
-        if (
-            setpoint_source is not None
-            and status_zone.current_status_activity_type == ActivityTypes.MANUAL
-        ):
-            return {
-                "heat_set_point": setpoint_source.heat_set_point,
-                "cool_set_point": setpoint_source.cool_set_point,
-            }
         status_zone_data = status_zone.as_dict()
-        heat_set_point = status_zone_data["heat_set_point"]
-        cool_set_point = status_zone_data["cool_set_point"]
-        setpoints_match_current_activity = False
-        setpoints_match_other_activity = False
-        if config_zone is not None and setpoint_source is not None:
-            setpoints_match_current_activity = (
-                heat_set_point == setpoint_source.heat_set_point
-                and cool_set_point == setpoint_source.cool_set_point
-            )
-            setpoints_match_other_activity = any(
-                activity.type != setpoint_source.type
-                and heat_set_point == activity.heat_set_point
-                and cool_set_point == activity.cool_set_point
-                for activity in config_zone.activities
-            )
-        if (
-            config_zone is not None
-            and setpoint_source is not None
-            and (
-                status_zone.setpoints_stale_for_activity
-                or (not setpoints_match_current_activity and setpoints_match_other_activity)
-            )
-        ):
+        if setpoint_source is not None and status_zone.setpoints_stale_for_activity:
             return {
                 "heat_set_point": setpoint_source.heat_set_point,
                 "cool_set_point": setpoint_source.cool_set_point,

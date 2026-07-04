@@ -9,6 +9,7 @@ from deepmerge import always_merger
 from .config import Config
 from .status import Status
 from .system import System
+from .util import safely_get_json_value
 
 _LOGGER = getLogger(__name__)
 
@@ -94,10 +95,17 @@ class WebsocketDataUpdater:
                 for zone in zones:
                     _timestamp = zone.pop("timestamp", None)
                     stale_zone = find_by_id(system.status.raw["zones"], zone["id"])
+                    current_activity = zone.get("currentActivity")
+                    incoming_activity_only = (
+                        "currentActivity" in zone and "htsp" not in zone and "clsp" not in zone
+                    )
                     if "currentActivity" in zone:
-                        stale_zone["_setpointsStaleForActivity"] = not (
-                            "htsp" in zone or "clsp" in zone
-                        )
+                        if incoming_activity_only and current_activity != stale_zone.get(
+                            "currentActivity"
+                        ):
+                            stale_zone["_setpointsStaleForActivity"] = True
+                        elif "htsp" in zone or "clsp" in zone:
+                            stale_zone["_setpointsStaleForActivity"] = False
                     elif "htsp" in zone or "clsp" in zone:
                         stale_zone["_setpointsStaleForActivity"] = False
                     always_merger.merge(stale_zone, zone)
@@ -109,21 +117,63 @@ class WebsocketDataUpdater:
                 _config_id = websocket_message_json.pop("infinitySystemConfigurationId", None)
                 _LOGGER.debug("InfinityConfig received: %s", websocket_message)
                 zones = websocket_message_json.pop("zones", [])
+                status_zone_by_id = {
+                    str(status_zone["id"]): status_zone
+                    for status_zone in system.status.raw["zones"]
+                }
                 for zone in zones:
                     _timestamp = zone.pop("timestamp", None)
                     if "id" in zone:
                         zone_id = zone["id"]
                         stale_zone = find_by_id(system.config.raw["zones"], zone_id)
+                        status_zone = status_zone_by_id.get(str(zone_id))
                         activities = zone.pop("activities", [])
                         for activity in activities:
                             _timestamp = activity.pop("timestamp", None)
                             _zone_configuration_id = activity.pop("zoneConfigurationId", None)
                             _fan_setting_id = activity.pop("fanSettingId", None)
-                            stale_activity = find_by_id(stale_zone["activities"], activity["id"])
+                            incoming_activity = activity.get("type")
+                            stale_activity = (
+                                next(
+                                    (
+                                        stale_activity
+                                        for stale_activity in stale_zone["activities"]
+                                        if stale_activity.get("type") == incoming_activity
+                                    ),
+                                    None,
+                                )
+                                if incoming_activity is not None
+                                else find_by_id(stale_zone["activities"], activity["id"])
+                            )
+                            incoming_activity_targets = "htsp" in activity or "clsp" in activity
+                            stale_status_zone_matches_activity = (
+                                status_zone is not None
+                                and status_zone.get("currentActivity") == incoming_activity
+                            )
                             if stale_activity is not None:
+                                activity_targets_changed = bool(
+                                    (
+                                        "htsp" in activity
+                                        and safely_get_json_value(activity, "htsp", float)
+                                        != safely_get_json_value(stale_activity, "htsp", float)
+                                    )
+                                    or (
+                                        "clsp" in activity
+                                        and safely_get_json_value(activity, "clsp", float)
+                                        != safely_get_json_value(stale_activity, "clsp", float)
+                                    )
+                                )
+                                if (
+                                    status_zone is not None
+                                    and stale_status_zone_matches_activity
+                                    and incoming_activity_targets
+                                    and activity_targets_changed
+                                ):
+                                    status_zone["_setpointsStaleForActivity"] = True
                                 always_merger.merge(stale_activity, activity)
                         always_merger.merge(stale_zone, zone)
                 always_merger.merge(system.config.raw, websocket_message_json)
                 system.config = Config(system.config.raw)
+                system.status = Status(system.status.raw)
             case _:
                 _LOGGER.error("Received unknown message: %s", websocket_message)
