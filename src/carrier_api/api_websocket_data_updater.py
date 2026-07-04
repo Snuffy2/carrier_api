@@ -399,10 +399,8 @@ class WebsocketDataUpdater:
             return
         incoming_pair = _raw_set_point_pair(zone)
         should_clear = False
-        if (
-            incoming_pair == manual_pair
-            or (zone.get("hold") is not None and zone.get("hold") not in ("on", True, 1))
-            or ("currentActivity" in zone and zone["currentActivity"] != ActivityTypes.MANUAL.value)
+        if incoming_pair == manual_pair or (
+            zone.get("hold") is not None and zone.get("hold") not in ("on", True, 1)
         ):
             should_clear = True
         elif incoming_pair is None:

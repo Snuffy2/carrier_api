@@ -640,6 +640,36 @@ async def test_status_zone_manual_activity_replay_is_single_use_after_correction
 
 
 @pytest.mark.asyncio
+async def test_status_zone_manual_activity_keeps_replay_through_stale_non_manual_status(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Keep replay armed through stale non-manual status before manual-only correction."""
+    await _send_zone_config(data_updater)
+
+    await _send_zone_status(
+        data_updater,
+        {
+            "id": TEST_ZONE_ID,
+            "currentActivity": "wake",
+            "htsp": DEFAULT_STATUS_SETPOINTS[0],
+            "clsp": DEFAULT_STATUS_SETPOINTS[1],
+        },
+    )
+    assert TEST_REPLAY_KEY in data_updater._manual_status_replays
+
+    await _send_zone_status(
+        data_updater,
+        {
+            "id": TEST_ZONE_ID,
+            "currentActivity": "manual",
+            "hold": "on",
+        },
+    )
+    _assert_zone_setpoints(carrier_system, *DEFAULT_MANUAL_SETPOINTS)
+
+
+@pytest.mark.asyncio
 async def test_status_zone_manual_activity_full_pair_matching_manual_setpoints_clears_replay_state(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
