@@ -85,6 +85,9 @@ class StatusZone:
         self.hold_until: str = safely_get_json_value(status_zone_json, "otmr")
         self._heat_set_point: float = safely_get_json_value(status_zone_json, "htsp", float)
         self._cool_set_point: float = safely_get_json_value(status_zone_json, "clsp", float)
+        self._setpoints_stale_for_activity: bool = bool(
+            status_zone_json.get("_setpointsStaleForActivity", False)
+        )
         self.conditioning: str = safely_get_json_value(status_zone_json, "zoneconditioning")
         self.damper_position: int = safely_get_json_value(status_zone_json, "damperposition", int)
 
@@ -147,6 +150,16 @@ class StatusZone:
             value: Raw cool set point to store.
         """
         self._cool_set_point = value
+
+    @property
+    def setpoints_stale_for_activity(self) -> bool:
+        """Return whether activity changed without raw status set points.
+
+        Returns:
+            ``True`` when the latest status update changed activity but omitted
+            raw heat and cool set points.
+        """
+        return self._setpoints_stale_for_activity
 
     @property
     def current_activity(self) -> ActivityTypes:

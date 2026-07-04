@@ -341,6 +341,37 @@ async def test_status_zone_htsp_message_handler(
 
 
 @pytest.mark.asyncio
+async def test_status_zone_activity_only_status_transition_preserves_config_setpoints(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Apply setpoint-only and activity-only updates without regressing effective targets."""
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 74.0,
+        "cool_set_point": 78.0,
+    }
+
+    setpoint_message = (FIXTURE_ROOT / "messages/status_zone_htsp.json").read_text()
+    activity_message = json.loads(
+        (FIXTURE_ROOT / "messages/status_zone_activity_only.json").read_text()
+    )
+    activity_message["zones"][0]["currentActivity"] = "home"
+
+    await data_updater.message_handler(setpoint_message)
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 72.0,
+        "cool_set_point": 85.0,
+    }
+
+    await data_updater.message_handler(json.dumps(activity_message))
+    assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.HOME
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 77.0,
+        "cool_set_point": 79.0,
+    }
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("websocket_message_str", ["messages/status_zone_htsp.json"], indirect=True)
 async def test_status_zone_htsp_message_handler_updates_effective_setpoints(
     data_updater: WebsocketDataUpdater,

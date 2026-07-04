@@ -587,6 +587,28 @@ def test_system_effective_zone_setpoints_fall_back_to_status(
         system.effective_zone_setpoints("missing")
 
 
+def test_system_effective_zone_setpoints_prefers_config_for_activity_only_status_update(
+    system_response: dict[str, Any],
+    energy_response: dict[str, Any],
+) -> None:
+    """Favor the new current-status activity config when no status setpoints update."""
+    raw_system = deepcopy(system_response["infinitySystems"][0])
+    raw_system["status"]["zones"][0]["currentActivity"] = "home"
+    raw_system["status"]["zones"][0]["htsp"] = "74"
+    raw_system["status"]["zones"][0]["clsp"] = "78"
+    system = System(
+        Profile(raw_system["profile"]),
+        Status(raw_system["status"]),
+        Config(raw_system["config"]),
+        Energy(energy_response["infinityEnergy"]),
+    )
+
+    assert system.effective_zone_setpoints("1") == {
+        "heat_set_point": 77.0,
+        "cool_set_point": 79.0,
+    }
+
+
 def test_system_reports_supported_hvac_capabilities_from_equipment_and_config(
     systems: list[System],
 ) -> None:

@@ -94,6 +94,12 @@ class WebsocketDataUpdater:
                 for zone in zones:
                     _timestamp = zone.pop("timestamp", None)
                     stale_zone = find_by_id(system.status.raw["zones"], zone["id"])
+                    if "currentActivity" in zone:
+                        stale_zone["_setpointsStaleForActivity"] = not (
+                            "htsp" in zone or "clsp" in zone
+                        )
+                    elif "htsp" in zone or "clsp" in zone:
+                        stale_zone["_setpointsStaleForActivity"] = False
                     always_merger.merge(stale_zone, zone)
                 merged_status = always_merger.merge(system.status.raw, websocket_message_json)
                 merged_status.update({"utcTime": datetime.now(UTC).isoformat()})
