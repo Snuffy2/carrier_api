@@ -755,6 +755,39 @@ async def test_status_zone_manual_activity_partial_status_disproves_replay_only_
 
 
 @pytest.mark.asyncio
+async def test_status_zone_manual_activity_two_one_sided_updates_do_not_reintroduce_stale_values(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Keep stale-replay correction after one-sided updates arrive in sequence."""
+    _seed_manual_replay(data_updater)
+
+    await _send_zone_status(
+        data_updater,
+        {
+            "id": TEST_ZONE_ID,
+            "currentActivity": "manual",
+            "hold": "on",
+            "clsp": 73,
+        },
+    )
+    assert TEST_REPLAY_KEY in data_updater._manual_status_replays
+    _assert_zone_setpoints(carrier_system, DEFAULT_MANUAL_SETPOINTS[0], 73)
+
+    await _send_zone_status(
+        data_updater,
+        {
+            "id": TEST_ZONE_ID,
+            "currentActivity": "manual",
+            "hold": "on",
+            "htsp": DEFAULT_STATUS_SETPOINTS[0],
+        },
+    )
+    assert TEST_REPLAY_KEY in data_updater._manual_status_replays
+    _assert_zone_setpoints(carrier_system, DEFAULT_MANUAL_SETPOINTS[0], 73)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("incoming_set_points", "expected_set_points"),
     [((74.0, 75.0), (65.0, 75.0)), ((65.0, 78.0), (65.0, 75.0))],
@@ -1142,6 +1175,35 @@ async def test_status_zone_manual_activity_with_incoming_hold_off_keeps_incoming
     assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.MANUAL
     assert carrier_system.status.zones[0].hold is False
     _assert_zone_setpoints(carrier_system, *DEFAULT_STATUS_SETPOINTS)
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_stale_hold_off_does_not_clear_replay(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Keep stale replay candidate when a delayed hold-off arrives after manual config."""
+    await _send_zone_config(
+        data_updater,
+        timestamp="2026-07-04T15:00:00.000Z",
+    )
+    assert TEST_REPLAY_KEY in data_updater._manual_status_replays
+
+    await _send_zone_status(
+        data_updater,
+        _manual_status_update(
+            heat_set_point=DEFAULT_STATUS_SETPOINTS[0],
+            cool_set_point=DEFAULT_STATUS_SETPOINTS[1],
+            hold="off",
+        ),
+        timestamp="2026-07-04T14:00:00.000Z",
+    )
+    assert TEST_REPLAY_KEY in data_updater._manual_status_replays
+    assert carrier_system.status.zones[0].hold is False
+
+    await _send_zone_status(data_updater, _manual_status_update())
+    assert TEST_REPLAY_KEY in data_updater._manual_status_replays
+    _assert_zone_setpoints(carrier_system, *DEFAULT_MANUAL_SETPOINTS)
 
 
 @pytest.mark.asyncio

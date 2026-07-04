@@ -82,6 +82,98 @@ def find_by_id(collection: list[dict], item_id: str) -> dict:
     raise ValueError(f"id: {item_id} not found in collection")
 
 
+def _align_partial_manual_status_setpoints(
+    zone: dict[str, Any],
+    stale_set_points: list[SetPointPair],
+    manual_set_points: SetPointPair,
+    incoming_heat_set_point: float | None,
+    incoming_cool_set_point: float | None,
+    raw_status_zone: dict[str, Any],
+    incoming_heat_is_valid: bool,
+    incoming_cool_is_valid: bool,
+    incoming_heat_is_stale: bool,
+    incoming_cool_is_stale: bool,
+) -> bool:
+    """Align partial manual status set point payloads.
+
+    Args:
+        zone: Incoming status zone payload to mutate when values are stale/missing.
+        stale_set_points: Candidate stale status pair(s) from prior replay state.
+        manual_set_points: Active manual config pair to recover from.
+        incoming_heat_set_point: Parsed incoming heat value when possible.
+        incoming_cool_set_point: Parsed incoming cool value when possible.
+        raw_status_zone: Current raw status zone before merge.
+        incoming_heat_is_valid: Whether incoming heat value is present and valid.
+        incoming_cool_is_valid: Whether incoming cool value is present and valid.
+        incoming_heat_is_stale: Whether incoming heat matches a stale pair value.
+        incoming_cool_is_stale: Whether incoming cool matches a stale pair value.
+
+    Returns:
+        ``True`` when the zone payload was modified.
+    """
+    did_align = False
+
+    if not incoming_heat_is_valid and not incoming_cool_is_valid:
+        incoming_heat_is_present = "htsp" in zone
+        incoming_cool_is_present = "clsp" in zone
+        if incoming_heat_is_present and incoming_cool_is_present:
+            return False
+        if incoming_heat_is_present:
+            zone["clsp"] = stale_set_points[0][1]
+            did_align = True
+        elif incoming_cool_is_present:
+            zone["htsp"] = stale_set_points[0][0]
+            did_align = True
+        else:
+            zone["htsp"] = manual_set_points[0]
+            zone["clsp"] = manual_set_points[1]
+            did_align = True
+
+    if incoming_heat_is_valid:
+        use_manual_heat = incoming_heat_is_stale
+        if incoming_cool_set_point is None and "clsp" in zone:
+            use_manual_heat = False
+        updated_heat_set_point = (
+            manual_set_points[0] if use_manual_heat else incoming_heat_set_point
+        )
+        if zone.get("htsp") != updated_heat_set_point:
+            zone["htsp"] = updated_heat_set_point
+            did_align = True
+
+    if incoming_cool_is_valid:
+        use_manual_cool = incoming_cool_is_stale
+        if incoming_heat_set_point is None and "htsp" in zone:
+            use_manual_cool = False
+        updated_cool_set_point = (
+            manual_set_points[1] if use_manual_cool else incoming_cool_set_point
+        )
+        if zone.get("clsp") != updated_cool_set_point:
+            zone["clsp"] = updated_cool_set_point
+            did_align = True
+
+    if not incoming_heat_is_valid:
+        raw_heat_set_point = _float_set_point(raw_status_zone.get("htsp"))
+        raw_heat_is_stale = any(
+            raw_heat_set_point == stale_heat_set_point
+            for stale_heat_set_point, _ in stale_set_points
+        )
+        if raw_heat_is_stale and zone.get("htsp") != manual_set_points[0]:
+            zone["htsp"] = manual_set_points[0]
+            did_align = True
+
+    if not incoming_cool_is_valid:
+        raw_cool_set_point = _float_set_point(raw_status_zone.get("clsp"))
+        raw_cool_is_stale = any(
+            raw_cool_set_point == stale_cool_set_point
+            for _, stale_cool_set_point in stale_set_points
+        )
+        if raw_cool_is_stale and zone.get("clsp") != manual_set_points[1]:
+            zone["clsp"] = manual_set_points[1]
+            did_align = True
+
+    return did_align
+
+
 def _align_manual_status_setpoints_with_config(
     system: System,
     zone: dict[str, Any],
@@ -177,35 +269,53 @@ def _align_manual_status_setpoints_with_config(
         )
         return True
 
-    if not incoming_manual_signal or _raw_set_point_pair(raw_status_zone) not in stale_set_points:
+    raw_status_pair = _raw_set_point_pair(raw_status_zone)
+    if not incoming_manual_signal or raw_status_pair is None:
         return False
 
-    incoming_heat_is_valid = "htsp" in zone and _float_set_point(zone.get("htsp")) is not None
-    incoming_cool_is_valid = "clsp" in zone and _float_set_point(zone.get("clsp")) is not None
+    incoming_heat_is_stale = any(
+        incoming_heat_set_point == stale_heat_set_point
+        for stale_heat_set_point, _ in stale_set_points
+    )
+    incoming_cool_is_stale = any(
+        incoming_cool_set_point == stale_cool_set_point
+        for _, stale_cool_set_point in stale_set_points
+    )
+    if raw_status_pair not in stale_set_points and not (
+        incoming_heat_is_stale or incoming_cool_is_stale
+    ):
+        return False
+
+    incoming_heat_is_valid = "htsp" in zone and incoming_heat_set_point is not None
+    incoming_cool_is_valid = "clsp" in zone and incoming_cool_set_point is not None
     if incoming_heat_is_valid and incoming_cool_is_valid:
         return False
+    did_align = _align_partial_manual_status_setpoints(
+        zone=zone,
+        stale_set_points=stale_set_points,
+        manual_set_points=manual_set_points,
+        incoming_heat_set_point=incoming_heat_set_point,
+        incoming_cool_set_point=incoming_cool_set_point,
+        raw_status_zone=raw_status_zone,
+        incoming_heat_is_valid=incoming_heat_is_valid,
+        incoming_cool_is_valid=incoming_cool_is_valid,
+        incoming_heat_is_stale=incoming_heat_is_stale,
+        incoming_cool_is_stale=incoming_cool_is_stale,
+    )
 
-    if incoming_heat_is_valid:
-        zone["clsp"] = manual_set_points[1]
-        zone["htsp"] = incoming_heat_set_point
-    else:
-        zone["htsp"] = manual_set_points[0]
-        zone["clsp"] = manual_set_points[1]
-    if incoming_cool_is_valid:
-        zone["clsp"] = incoming_cool_set_point
-        if not incoming_heat_is_valid:
-            zone["htsp"] = manual_set_points[0]
-
-    if zone["htsp"] == incoming_heat_set_point and zone["clsp"] == incoming_cool_set_point:
+    if not did_align:
         return False
+
+    current_heat_set_point = zone.get("htsp")
+    current_cool_set_point = zone.get("clsp")
 
     _LOGGER.debug(
         "Replacing stale manual status set points for zone %s: raw=%s/%s, local=%s/%s",
         zone["id"],
         incoming_heat_set_point,
         incoming_cool_set_point,
-        zone["htsp"],
-        zone["clsp"],
+        current_heat_set_point,
+        current_cool_set_point,
     )
     return True
 
@@ -359,7 +469,12 @@ class WebsocketDataUpdater:
                         last_status_timestamp = self._last_status_timestamps.get(replay_key)
                         if last_status_timestamp is None or zone_timestamp > last_status_timestamp:
                             self._last_status_timestamps[replay_key] = zone_timestamp
-                    self._clear_manual_replay(replay_key, zone, aligned)
+                    self._clear_manual_replay(
+                        replay_key,
+                        zone,
+                        aligned,
+                        zone_timestamp,
+                    )
                 merged_status = always_merger.merge(system.status.raw, websocket_message_json)
                 merged_status.update({"utcTime": datetime.now(UTC).isoformat()})
                 system.status = Status(merged_status)
@@ -461,13 +576,15 @@ class WebsocketDataUpdater:
         replay_key: tuple[str, str],
         zone: dict[str, Any],
         aligned: bool,
+        zone_timestamp: datetime | None,
     ) -> None:
         """Clear stale manual replay tracking when incoming status proves it stale.
 
         Args:
-            replay_key: System serial and zone ID key for candidate tracking.
-            zone: Incoming status zone payload.
-            aligned: Whether the incoming payload was rewritten from replay state.
+        replay_key: System serial and zone ID key for candidate tracking.
+        zone: Incoming status zone payload.
+        aligned: Whether the incoming payload was rewritten from replay state.
+        zone_timestamp: Timestamp parsed from the status frame when available.
         """
         replay = self._manual_status_replays.get(replay_key)
         if replay is None:
@@ -481,7 +598,10 @@ class WebsocketDataUpdater:
         if incoming_pair == manual_pair or (
             zone.get("hold") is not None and zone.get("hold") not in ("on", True, 1)
         ):
-            should_clear = True
+            should_clear = not self._is_stale_status_zone_timestamp(
+                replay_key=replay_key,
+                zone_timestamp=zone_timestamp,
+            )
         elif incoming_pair is None:
             incoming_heat_set_point = _float_set_point(zone.get("htsp"))
             incoming_cool_set_point = _float_set_point(zone.get("clsp"))
@@ -503,6 +623,21 @@ class WebsocketDataUpdater:
 
         if should_clear:
             self._manual_status_replays.pop(replay_key, None)
+
+    def _is_stale_status_zone_timestamp(
+        self,
+        *,
+        replay_key: tuple[str, str],
+        zone_timestamp: datetime | None,
+    ) -> bool:
+        """Return ``True`` when a status frame timestamp predates known watermarks."""
+        if zone_timestamp is None:
+            return False
+        last_status_timestamp = self._last_status_timestamps.get(replay_key)
+        if last_status_timestamp is not None and zone_timestamp < last_status_timestamp:
+            return True
+        last_config_timestamp = self._last_config_timestamps.get(replay_key)
+        return last_config_timestamp is not None and zone_timestamp < last_config_timestamp
 
     def _update_manual_replay_candidate(
         self,
