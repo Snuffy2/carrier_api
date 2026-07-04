@@ -693,6 +693,32 @@ async def test_status_zone_manual_activity_partial_status_disproves_replay_only_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("incoming_set_points", "expected_set_points"),
+    [((74.0, 75.0), (65.0, 75.0)), ((65.0, 78.0), (65.0, 75.0))],
+)
+async def test_status_zone_manual_activity_mixed_full_pairs_correct_stale_side_without_clearing_replay(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+    incoming_set_points: tuple[float, float],
+    expected_set_points: tuple[float, float],
+) -> None:
+    """Align mixed manual/stale full frames to the active manual pair and keep replay."""
+    _seed_manual_replay(data_updater)
+
+    await _send_zone_status(
+        data_updater,
+        _manual_status_update(
+            heat_set_point=incoming_set_points[0],
+            cool_set_point=incoming_set_points[1],
+        ),
+    )
+
+    assert TEST_REPLAY_KEY in data_updater._manual_status_replays
+    _assert_zone_setpoints(carrier_system, expected_set_points[0], expected_set_points[1])
+
+
+@pytest.mark.asyncio
 async def test_status_zone_manual_activity_config_update_keeps_replay_after_local_status_correction(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,

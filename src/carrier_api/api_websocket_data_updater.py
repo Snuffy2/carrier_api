@@ -117,9 +117,50 @@ def _align_manual_status_setpoints_with_config(
     ) is ActivityTypes.MANUAL or zone.get("hold") in ("on", True, 1)
 
     if incoming_pair is not None:
-        if incoming_pair == manual_set_points or incoming_pair not in stale_set_points:
+        if incoming_pair == manual_set_points:
             return False
-    elif (
+        if incoming_pair in stale_set_points:
+            zone["htsp"], zone["clsp"] = manual_set_points
+            _LOGGER.debug(
+                "Replacing stale manual status set points for zone %s: raw=%s/%s, local=%s/%s",
+                zone["id"],
+                incoming_heat_set_point,
+                incoming_cool_set_point,
+                zone["htsp"],
+                zone["clsp"],
+            )
+            return True
+
+        incoming_heat_is_stale = any(
+            incoming_heat_set_point == stale_heat_set_point
+            for stale_heat_set_point, _ in stale_set_points
+        )
+        incoming_cool_is_stale = any(
+            incoming_cool_set_point == stale_cool_set_point
+            for _, stale_cool_set_point in stale_set_points
+        )
+        incoming_heat_is_manual = incoming_heat_set_point == manual_set_points[0]
+        incoming_cool_is_manual = incoming_cool_set_point == manual_set_points[1]
+        if incoming_heat_is_manual == incoming_cool_is_manual or (
+            incoming_heat_is_stale == incoming_cool_is_stale
+        ):
+            return False
+
+        zone["htsp"] = manual_set_points[0] if incoming_heat_is_stale else incoming_heat_set_point
+        zone["clsp"] = manual_set_points[1] if incoming_cool_is_stale else incoming_cool_set_point
+        if zone["htsp"] == incoming_heat_set_point and zone["clsp"] == incoming_cool_set_point:
+            return False
+
+        _LOGGER.debug(
+            "Replacing stale manual status set points for zone %s: raw=%s/%s, local=%s/%s",
+            zone["id"],
+            incoming_heat_set_point,
+            incoming_cool_set_point,
+            zone["htsp"],
+            zone["clsp"],
+        )
+        return True
+    if (
         "htsp" in zone
         or "clsp" in zone
         or not incoming_manual_signal
