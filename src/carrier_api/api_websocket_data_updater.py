@@ -16,7 +16,6 @@ from .system import System
 _LOGGER = getLogger(__name__)
 
 SetPointPair = tuple[float, float]
-MaybeSetPointPair = tuple[float | None, float | None]
 ManualReplay = tuple[list[SetPointPair], SetPointPair]
 
 
@@ -376,42 +375,25 @@ class WebsocketDataUpdater:
             incoming_cool_set_point = _float_set_point(zone.get("clsp"))
             if incoming_heat_set_point is None and incoming_cool_set_point is None:
                 return
-            if all(
+            incoming_heat_disproves_replay = all(
                 incoming_heat_set_point is not None
                 and incoming_heat_set_point != stale_heat_set_point
                 for stale_heat_set_point, _ in stale_set_points
-            ):
+            )
+            if incoming_heat_disproves_replay:
                 self._clear_replay_state(replay_key)
                 return
-            if all(
+            incoming_cool_disproves_replay = all(
                 incoming_cool_set_point is not None
                 and incoming_cool_set_point != stale_cool_set_point
                 for _, stale_cool_set_point in stale_set_points
-            ):
+            )
+            if incoming_cool_disproves_replay:
                 self._clear_replay_state(replay_key)
                 return
             return
         if incoming_pair not in stale_set_points:
             self._clear_replay_state(replay_key)
-
-    def _manual_config_set_points_from_zone(self, zone: dict[str, Any]) -> MaybeSetPointPair:
-        """Return manual config heat/cool set points from a raw config zone.
-
-        Args:
-            zone: Raw config zone payload.
-
-        Returns:
-            Manual config heat and cool set points, or ``(None, None)`` when
-            unavailable.
-        """
-        manual_activity = _manual_activity(zone)
-        if manual_activity is None:
-            return (None, None)
-
-        return (
-            _float_set_point(manual_activity.get("htsp")),
-            _float_set_point(manual_activity.get("clsp")),
-        )
 
     def _update_manual_replay_candidate(
         self,

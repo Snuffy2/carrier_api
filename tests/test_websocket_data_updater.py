@@ -19,6 +19,12 @@ from carrier_api import (
 from carrier_api.api_websocket_data_updater import find_by_id
 
 FIXTURE_ROOT = Path(__file__).parent
+TEST_DEVICE_ID = "SERIALXXX"
+TEST_ZONE_ID = 1
+DEFAULT_STATUS_SETPOINTS = (74.0, 78.0)
+DEFAULT_MANUAL_SETPOINTS = (65.0, 75.0)
+TEST_REPLAY_KEY = (TEST_DEVICE_ID, str(TEST_ZONE_ID))
+OMIT_SETPOINT = object()
 
 
 @pytest.fixture
@@ -345,11 +351,11 @@ async def test_status_zone_htsp_message_handler(
 async def _send_zone_config(
     data_updater: WebsocketDataUpdater,
     *,
-    zone_id: int = 1,
+    zone_id: int = TEST_ZONE_ID,
     hold: str = "on",
     hold_activity: str | None = "manual",
-    heat_set_point: float = 65,
-    cool_set_point: float = 75,
+    heat_set_point: float = DEFAULT_MANUAL_SETPOINTS[0],
+    cool_set_point: float = DEFAULT_MANUAL_SETPOINTS[1],
 ) -> None:
     """Send a compact manual activity config websocket update.
 
@@ -365,7 +371,7 @@ async def _send_zone_config(
         json.dumps(
             {
                 "messageType": "InfinityConfig",
-                "deviceId": "SERIALXXX",
+                "deviceId": TEST_DEVICE_ID,
                 "zones": [
                     {
                         "id": zone_id,
@@ -400,10 +406,58 @@ async def _send_zone_status(
         json.dumps(
             {
                 "messageType": "InfinityStatus",
-                "deviceId": "SERIALXXX",
+                "deviceId": TEST_DEVICE_ID,
                 "zones": [zone_update],
             }
         )
+    )
+
+
+def _manual_status_update(
+    *,
+    heat_set_point: Any = DEFAULT_STATUS_SETPOINTS[0],
+    cool_set_point: Any = DEFAULT_STATUS_SETPOINTS[1],
+    **zone_update: Any,
+) -> dict[str, Any]:
+    """Build a compact manual status zone update for replay-focused tests.
+
+    Args:
+        heat_set_point: Heat set point to include, or ``OMIT_SETPOINT`` to omit.
+        cool_set_point: Cool set point to include, or ``OMIT_SETPOINT`` to omit.
+        **zone_update: Zone fields that override the default manual payload.
+
+    Returns:
+        A raw status zone fragment suitable for ``_send_zone_status``.
+    """
+    update = {
+        "id": TEST_ZONE_ID,
+        "currentActivity": "manual",
+        "hold": "on",
+    }
+    if heat_set_point is not OMIT_SETPOINT:
+        update["htsp"] = heat_set_point
+    if cool_set_point is not OMIT_SETPOINT:
+        update["clsp"] = cool_set_point
+    update.update(zone_update)
+    return update
+
+
+def _seed_manual_replay(
+    data_updater: WebsocketDataUpdater,
+    *,
+    stale_set_points: list[tuple[float, float]] | None = None,
+    manual_set_points: tuple[float, float] = DEFAULT_MANUAL_SETPOINTS,
+) -> None:
+    """Seed manual replay state directly for narrow replay tests.
+
+    Args:
+        data_updater: Websocket updater under test.
+        stale_set_points: Candidate stale status set point pairs.
+        manual_set_points: Active manual config set point pair.
+    """
+    data_updater._manual_status_replays[TEST_REPLAY_KEY] = (
+        stale_set_points or [DEFAULT_STATUS_SETPOINTS],
+        manual_set_points,
     )
 
 
@@ -570,13 +624,7 @@ async def test_status_zone_manual_activity_replay_is_single_use_after_correction
         carrier_system: Prepared system model that receives the update.
     """
     await _send_zone_config(data_updater)
-    stale_status = {
-        "id": 1,
-        "currentActivity": "manual",
-        "hold": "on",
-        "htsp": 74,
-        "clsp": 78,
-    }
+    stale_status = _manual_status_update()
 
     await _send_zone_status(data_updater, stale_status)
     _assert_zone_setpoints(carrier_system, 65, 75)
@@ -606,24 +654,20 @@ async def test_status_zone_manual_activity_full_pair_matching_manual_setpoints_c
     carrier_system: System,
 ) -> None:
     """Clear stale replay state when incoming status arrives at the active manual pair."""
-    replay_key = ("SERIALXXX", "1")
-    data_updater._manual_status_replays[replay_key] = (
-        [(74.0, 78.0), (65.0, 75.0)],
-        (65.0, 75.0),
+    _seed_manual_replay(
+        data_updater,
+        stale_set_points=[DEFAULT_STATUS_SETPOINTS, DEFAULT_MANUAL_SETPOINTS],
     )
 
     await _send_zone_status(
         data_updater,
-        {
-            "id": 1,
-            "currentActivity": "manual",
-            "hold": "on",
-            "htsp": 65,
-            "clsp": 75,
-        },
+        _manual_status_update(
+            heat_set_point=DEFAULT_MANUAL_SETPOINTS[0],
+            cool_set_point=DEFAULT_MANUAL_SETPOINTS[1],
+        ),
     )
 
-    assert replay_key not in data_updater._manual_status_replays
+    assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
     _assert_zone_setpoints(carrier_system, 65, 75)
 
 
@@ -633,40 +677,22 @@ async def test_status_zone_manual_activity_partial_status_disproves_replay_only_
     carrier_system: System,
 ) -> None:
     """Keep replay when malformed one-side values arrive; clear it on a contradictory side."""
-    replay_key = ("SERIALXXX", "1")
-    data_updater._manual_status_replays[replay_key] = (
-        [(74.0, 78.0)],
-        (65.0, 75.0),
-    )
+    _seed_manual_replay(data_updater)
 
     await _send_zone_status(
         data_updater,
-        {
-            "id": 1,
-            "currentActivity": "manual",
-            "hold": "on",
-            "htsp": 73,
-        },
+        _manual_status_update(heat_set_point=73, cool_set_point=OMIT_SETPOINT),
     )
-    assert replay_key not in data_updater._manual_status_replays
+    assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
     _assert_zone_setpoints(carrier_system, 73, 78)
 
-    data_updater._manual_status_replays[replay_key] = (
-        [(74.0, 78.0)],
-        (65.0, 75.0),
-    )
+    _seed_manual_replay(data_updater)
     await _send_zone_status(
         data_updater,
-        {
-            "id": 1,
-            "currentActivity": "manual",
-            "hold": "on",
-            "htsp": "bad",
-            "clsp": 78,
-        },
+        _manual_status_update(heat_set_point="bad"),
     )
 
-    assert replay_key in data_updater._manual_status_replays
+    assert TEST_REPLAY_KEY in data_updater._manual_status_replays
     _assert_zone_setpoints(carrier_system, 73, 78)
 
 
