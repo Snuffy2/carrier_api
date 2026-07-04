@@ -3,7 +3,7 @@
 from logging import getLogger
 from typing import Any
 
-from .config import Config, ConfigZone, ConfigZoneActivity
+from .config import Config
 from .const import ActivityTypes
 from .energy import Energy
 from .profile import Profile
@@ -141,17 +141,27 @@ class System:
                 "cool_set_point": setpoint_source.cool_set_point,
             }
         status_zone_data = status_zone.as_dict()
+        heat_set_point = status_zone_data["heat_set_point"]
+        cool_set_point = status_zone_data["cool_set_point"]
+        setpoints_match_current_activity = False
+        setpoints_match_other_activity = False
+        if config_zone is not None and setpoint_source is not None:
+            setpoints_match_current_activity = (
+                heat_set_point == setpoint_source.heat_set_point
+                and cool_set_point == setpoint_source.cool_set_point
+            )
+            setpoints_match_other_activity = any(
+                activity.type != setpoint_source.type
+                and heat_set_point == activity.heat_set_point
+                and cool_set_point == activity.cool_set_point
+                for activity in config_zone.activities
+            )
         if (
             config_zone is not None
             and setpoint_source is not None
             and (
                 status_zone.setpoints_stale_for_activity
-                or self._status_setpoints_match_other_activity(
-                    status_zone_data["heat_set_point"],
-                    status_zone_data["cool_set_point"],
-                    config_zone,
-                    setpoint_source,
-                )
+                or (not setpoints_match_current_activity and setpoints_match_other_activity)
             )
         ):
             return {
@@ -162,38 +172,6 @@ class System:
             "heat_set_point": status_zone_data["heat_set_point"],
             "cool_set_point": status_zone_data["cool_set_point"],
         }
-
-    def _status_setpoints_match_other_activity(
-        self,
-        heat_set_point: float,
-        cool_set_point: float,
-        config_zone: ConfigZone,
-        current_activity: ConfigZoneActivity,
-    ) -> bool:
-        """Return whether raw status targets look stale for current activity.
-
-        Args:
-            heat_set_point: Raw status heat set point.
-            cool_set_point: Raw status cool set point.
-            config_zone: Matching zone configuration.
-            current_activity: Config activity matching the reported status
-                activity.
-
-        Returns:
-            ``True`` when raw status set points match a configured activity
-            other than the reported current activity.
-        """
-        if (
-            heat_set_point == current_activity.heat_set_point
-            and cool_set_point == current_activity.cool_set_point
-        ):
-            return False
-        return any(
-            activity.type != current_activity.type
-            and heat_set_point == activity.heat_set_point
-            and cool_set_point == activity.cool_set_point
-            for activity in config_zone.activities
-        )
 
     def _supports_any_energy_capability(self, capability_fields: tuple[str, ...]) -> bool:
         """Return whether any named energy capability is enabled.
