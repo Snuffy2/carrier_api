@@ -357,33 +357,27 @@ class WebsocketDataUpdater:
             zone: Merged raw config zone payload.
             previous_status_set_points: Status set points before the config merge.
         """
-        if zone.get("hold") != "on" or zone.get("holdActivity") != ActivityTypes.MANUAL.value:
-            self._manual_status_replays.pop(replay_key, None)
-            return
+        manual_set_points: SetPointPair | None = None
+        if zone.get("hold") == "on" and zone.get("holdActivity") == ActivityTypes.MANUAL.value:
+            manual_activity = next(
+                (
+                    activity
+                    for activity in zone.get("activities", [])
+                    if str(activity.get("type")) == ActivityTypes.MANUAL.value
+                ),
+                None,
+            )
+            if manual_activity is not None:
+                manual_heat_set_point = _float_set_point(manual_activity.get("htsp"))
+                manual_cool_set_point = _float_set_point(manual_activity.get("clsp"))
+                if manual_heat_set_point is not None and manual_cool_set_point is not None:
+                    manual_set_points = (manual_heat_set_point, manual_cool_set_point)
 
-        manual_activity = next(
-            (
-                activity
-                for activity in zone.get("activities", [])
-                if str(activity.get("type")) == ActivityTypes.MANUAL.value
-            ),
-            None,
-        )
-        if manual_activity is None:
-            self._manual_status_replays.pop(replay_key, None)
-            return
-
-        manual_heat_set_point = _float_set_point(manual_activity.get("htsp"))
-        manual_cool_set_point = _float_set_point(manual_activity.get("clsp"))
-        if manual_heat_set_point is None or manual_cool_set_point is None:
-            self._manual_status_replays.pop(replay_key, None)
-            return
-        if previous_status_set_points is None:
-            self._manual_status_replays.pop(replay_key, None)
-            return
-
-        manual_set_points = (manual_heat_set_point, manual_cool_set_point)
-        if previous_status_set_points == manual_set_points:
+        if (
+            manual_set_points is None
+            or previous_status_set_points is None
+            or previous_status_set_points == manual_set_points
+        ):
             self._manual_status_replays.pop(replay_key, None)
             return
 
