@@ -19,6 +19,11 @@ SetPointPair = tuple[float, float]
 ManualReplay = tuple[list[SetPointPair], SetPointPair]
 
 
+def _is_hold_on(value: Any) -> bool:
+    """Return ``True`` when a Carrier hold value indicates an active hold."""
+    return value in ("on", True, 1)
+
+
 def find_by_id(collection: list[dict], item_id: str) -> dict:
     """Find an item in a Carrier payload collection by id.
 
@@ -62,7 +67,7 @@ def _align_manual_status_setpoints_with_config(
     incoming_hold = zone.get("hold")
     if "currentActivity" in zone and incoming_activity is not ActivityTypes.MANUAL:
         return False
-    if incoming_hold not in (None, "on"):
+    if incoming_hold is not None and not _is_hold_on(incoming_hold):
         return False
 
     try:
@@ -81,19 +86,24 @@ def _align_manual_status_setpoints_with_config(
         else _activity_type(raw_status_zone.get("currentActivity")) is ActivityTypes.MANUAL
     )
     config_is_manual = (
-        config_zone.get("hold") in ("on", True, 1)
+        _is_hold_on(config_zone.get("hold"))
         and config_zone.get("holdActivity") == ActivityTypes.MANUAL.value
     )
     if not status_is_manual and not config_is_manual:
         return False
 
     incoming_pair = _raw_set_point_pair(zone)
+    incoming_manual_signal = _activity_type(
+        zone.get("currentActivity")
+    ) is ActivityTypes.MANUAL or _is_hold_on(zone.get("hold"))
+
     if incoming_pair is not None:
         if incoming_pair == manual_set_points or incoming_pair not in stale_set_points:
             return False
     elif (
         "htsp" in zone
         or "clsp" in zone
+        or not incoming_manual_signal
         or _raw_set_point_pair(raw_status_zone) not in stale_set_points
     ):
         return False
@@ -315,7 +325,7 @@ class WebsocketDataUpdater:
         should_clear = False
         if (
             incoming_pair == manual_pair
-            or zone.get("hold") not in (None, "on")
+            or (zone.get("hold") is not None and not _is_hold_on(zone.get("hold")))
             or ("currentActivity" in zone and zone["currentActivity"] != ActivityTypes.MANUAL.value)
         ):
             should_clear = True
@@ -355,7 +365,7 @@ class WebsocketDataUpdater:
             previous_status_set_points: Status set points before the config merge.
         """
         manual_set_points: SetPointPair | None = None
-        if zone.get("hold") == "on" and zone.get("holdActivity") == ActivityTypes.MANUAL.value:
+        if _is_hold_on(zone.get("hold")) and zone.get("holdActivity") == ActivityTypes.MANUAL.value:
             manual_activity = next(
                 (
                     activity

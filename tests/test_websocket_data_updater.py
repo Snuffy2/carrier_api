@@ -351,7 +351,7 @@ async def _send_zone_config(
     data_updater: WebsocketDataUpdater,
     *,
     zone_id: int = TEST_ZONE_ID,
-    hold: str = "on",
+    hold: str | bool | int = "on",
     hold_activity: str | None = "manual",
     heat_set_point: float = DEFAULT_MANUAL_SETPOINTS[0],
     cool_set_point: float = DEFAULT_MANUAL_SETPOINTS[1],
@@ -854,6 +854,42 @@ async def test_status_zone_manual_activity_ignores_stale_status_when_config_hold
     )
 
     assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.MANUAL
+    _assert_zone_setpoints(carrier_system, *DEFAULT_STATUS_SETPOINTS)
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_uses_config_setpoints_when_hold_true(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Accept boolean hold values as equivalent to ``on`` for replay arming."""
+    await _send_zone_config(data_updater, hold=True)
+
+    await _send_zone_status(
+        data_updater,
+        _manual_status_update(hold=True),
+    )
+
+    _assert_zone_setpoints(carrier_system, *DEFAULT_MANUAL_SETPOINTS)
+
+
+@pytest.mark.asyncio
+async def test_status_zone_manual_activity_humidity_only_frame_does_not_rewrite_setpoints(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Avoid injecting manual set points when a replayed frame has no manual signal."""
+    _seed_manual_replay(data_updater)
+
+    await _send_zone_status(
+        data_updater,
+        {
+            "id": TEST_ZONE_ID,
+            "rh": 42,
+        },
+    )
+
+    assert carrier_system.status.zones[0].humidity == 42
     _assert_zone_setpoints(carrier_system, *DEFAULT_STATUS_SETPOINTS)
 
 
