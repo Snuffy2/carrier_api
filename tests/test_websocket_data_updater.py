@@ -494,11 +494,11 @@ async def test_status_zone_update_skips_missing_or_unknown_zone_id(
         json.dumps(
             {
                 "messageType": "InfinityStatus",
-                "deviceId": "SERIALXXX",
+                "deviceId": TEST_DEVICE_ID,
                 "zones": [
                     {"rh": 99},
                     {"id": "unknown-zone", "rh": 88},
-                    {"id": 1, "rh": 35},
+                    {"id": TEST_ZONE_ID, "rh": 35},
                 ],
             }
         )
@@ -566,7 +566,7 @@ async def test_status_zone_manual_activity_preserves_legitimate_status_setpoints
     await _send_zone_status(
         data_updater,
         {
-            "id": 1,
+            "id": TEST_ZONE_ID,
             "currentActivity": "manual",
             "hold": "on",
             "htsp": 79,
@@ -741,7 +741,7 @@ async def test_status_zone_manual_activity_malformed_heat_setpoint_is_not_merged
     await _send_zone_status(
         data_updater,
         {
-            "id": 1,
+            "id": TEST_ZONE_ID,
             "currentActivity": "manual",
             "hold": "on",
             "htsp": bad_heat_set_point,

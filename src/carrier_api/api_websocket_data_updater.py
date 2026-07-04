@@ -315,16 +315,14 @@ class WebsocketDataUpdater:
         if aligned:
             return
         incoming_pair = _raw_set_point_pair(zone)
-        if incoming_pair == manual_pair:
-            self._manual_status_replays.pop(replay_key, None)
-            return
-        if zone.get("hold") not in (None, "on"):
-            self._manual_status_replays.pop(replay_key, None)
-            return
-        if "currentActivity" in zone and zone["currentActivity"] != ActivityTypes.MANUAL.value:
-            self._manual_status_replays.pop(replay_key, None)
-            return
-        if incoming_pair is None:
+        should_clear = False
+        if (
+            incoming_pair == manual_pair
+            or zone.get("hold") not in (None, "on")
+            or ("currentActivity" in zone and zone["currentActivity"] != ActivityTypes.MANUAL.value)
+        ):
+            should_clear = True
+        elif incoming_pair is None:
             incoming_heat_set_point = _float_set_point(zone.get("htsp"))
             incoming_cool_set_point = _float_set_point(zone.get("clsp"))
             if incoming_heat_set_point is None and incoming_cool_set_point is None:
@@ -334,19 +332,16 @@ class WebsocketDataUpdater:
                 and incoming_heat_set_point != stale_heat_set_point
                 for stale_heat_set_point, _ in stale_set_points
             )
-            if incoming_heat_disproves_replay:
-                self._manual_status_replays.pop(replay_key, None)
-                return
             incoming_cool_disproves_replay = all(
                 incoming_cool_set_point is not None
                 and incoming_cool_set_point != stale_cool_set_point
                 for _, stale_cool_set_point in stale_set_points
             )
-            if incoming_cool_disproves_replay:
-                self._manual_status_replays.pop(replay_key, None)
-                return
-            return
-        if incoming_pair not in stale_set_points:
+            should_clear = incoming_heat_disproves_replay or incoming_cool_disproves_replay
+        elif incoming_pair not in stale_set_points:
+            should_clear = True
+
+        if should_clear:
             self._manual_status_replays.pop(replay_key, None)
 
     def _update_manual_replay_candidate(
