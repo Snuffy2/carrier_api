@@ -231,8 +231,6 @@ class WebsocketDataUpdater:
             )
             return
         system = self.carrier_system(serial_id=serial_id)
-        if system is None:
-            return
         match message_type:
             case "InfinityStatus":
                 _LOGGER.debug("InfinityStatus received: %s", websocket_message)
@@ -281,8 +279,7 @@ class WebsocketDataUpdater:
                             _zone_configuration_id = activity.pop("zoneConfigurationId", None)
                             _fan_setting_id = activity.pop("fanSettingId", None)
                             stale_activity = find_by_id(stale_zone["activities"], activity["id"])
-                            if stale_activity is not None:
-                                always_merger.merge(stale_activity, activity)
+                            always_merger.merge(stale_activity, activity)
                         always_merger.merge(stale_zone, zone)
                         self._update_manual_replay_candidate(
                             replay_key=(serial_id, str(zone_id)),
