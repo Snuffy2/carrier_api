@@ -298,9 +298,9 @@ def test_status_zone_set_point_properties_are_deprecated(
 
     assert zone._heat_set_point == 74
     assert zone._cool_set_point == 78
-    with pytest.deprecated_call(match="Use _heat_set_point"):
+    with pytest.deprecated_call(match="System.effective_zone_setpoints"):
         assert zone.heat_set_point == 74
-    with pytest.deprecated_call(match="Use _cool_set_point"):
+    with pytest.deprecated_call(match="System.effective_zone_setpoints"):
         assert zone.cool_set_point == 78
 
 
@@ -507,7 +507,7 @@ def test_system_effective_zone_setpoints_use_status_resolved_config_activity(
     system_response: dict[str, Any],
     energy_response: dict[str, Any],
 ) -> None:
-    """Read effective targets from the activity Carrier reports as current."""
+    """Read effective targets from Carrier-reported manual activity config."""
     raw_system = deepcopy(system_response["infinitySystems"][0])
     raw_system["status"]["zones"][0]["currentActivity"] = "manual"
     raw_system["status"]["zones"][0]["htsp"] = "70"
@@ -529,6 +529,35 @@ def test_system_effective_zone_setpoints_use_status_resolved_config_activity(
     assert system.effective_zone_setpoints("1") == {
         "heat_set_point": 66.0,
         "cool_set_point": 76.0,
+    }
+
+
+def test_system_effective_zone_setpoints_prefers_status_for_non_manual_activity(
+    system_response: dict[str, Any],
+    energy_response: dict[str, Any],
+) -> None:
+    """Use raw status set points for non-manual activity updates."""
+    raw_system = deepcopy(system_response["infinitySystems"][0])
+    raw_system["status"]["zones"][0]["currentActivity"] = "wake"
+    raw_system["status"]["zones"][0]["htsp"] = "70"
+    raw_system["status"]["zones"][0]["clsp"] = "80"
+    manual_activity = next(
+        activity
+        for activity in raw_system["config"]["zones"][0]["activities"]
+        if activity["type"] == "manual"
+    )
+    manual_activity["htsp"] = "66"
+    manual_activity["clsp"] = "76"
+    system = System(
+        Profile(raw_system["profile"]),
+        Status(raw_system["status"]),
+        Config(raw_system["config"]),
+        Energy(energy_response["infinityEnergy"]),
+    )
+
+    assert system.effective_zone_setpoints("1") == {
+        "heat_set_point": 70.0,
+        "cool_set_point": 80.0,
     }
 
 

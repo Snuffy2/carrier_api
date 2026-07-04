@@ -4,6 +4,7 @@ from logging import getLogger
 from typing import Any
 
 from .config import Config
+from .const import ActivityTypes
 from .energy import Energy
 from .profile import Profile
 from .status import Status
@@ -101,11 +102,10 @@ class System:
         }
 
     def effective_zone_setpoints(self, zone_id: str) -> ZoneSetPoints:
-        """Return target set points for a zone, preferring config activity data.
+        """Return zone target set points with manual-activity config resolution.
 
-        Carrier status set points can lag after a target change. The status
-        zone still reports the active activity type, so resolve that activity in
-        config and use its set points when available.
+        Manual status activity uses config-derived set points when available.
+        Non-manual status activity uses raw status set points.
 
         Args:
             zone_id: Carrier zone ID to inspect.
@@ -129,16 +129,19 @@ class System:
         )
         setpoint_source = (
             config_zone.current_status_activity(status_zone) if config_zone is not None else None
-        ) or status_zone
-        if setpoint_source is status_zone:
-            status_zone_data = status_zone.as_dict()
+        )
+        if (
+            setpoint_source is not None
+            and status_zone.current_status_activity_type == ActivityTypes.MANUAL
+        ):
             return {
-                "heat_set_point": status_zone_data["heat_set_point"],
-                "cool_set_point": status_zone_data["cool_set_point"],
+                "heat_set_point": setpoint_source.heat_set_point,
+                "cool_set_point": setpoint_source.cool_set_point,
             }
+        status_zone_data = status_zone.as_dict()
         return {
-            "heat_set_point": setpoint_source.heat_set_point,
-            "cool_set_point": setpoint_source.cool_set_point,
+            "heat_set_point": status_zone_data["heat_set_point"],
+            "cool_set_point": status_zone_data["cool_set_point"],
         }
 
     def _supports_any_energy_capability(self, capability_fields: tuple[str, ...]) -> bool:

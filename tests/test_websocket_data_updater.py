@@ -341,6 +341,25 @@ async def test_status_zone_htsp_message_handler(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("websocket_message_str", ["messages/status_zone_htsp.json"], indirect=True)
+async def test_status_zone_htsp_message_handler_updates_effective_setpoints(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+    websocket_message_str: str,
+) -> None:
+    """Prefer live status set points when a websocket setpoint-only update arrives."""
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 74.0,
+        "cool_set_point": 78.0,
+    }
+    await data_updater.message_handler(websocket_message_str)
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 72.0,
+        "cool_set_point": 85.0,
+    }
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("websocket_message_str", ["messages/config_zone_hold.json"], indirect=True)
 async def test_config_zone_hold_message_handler(
     data_updater: WebsocketDataUpdater,

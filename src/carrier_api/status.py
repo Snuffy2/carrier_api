@@ -90,17 +90,15 @@ class StatusZone:
 
     @property
     @warnings.deprecated(
-        "Use _heat_set_point for raw Carrier status, or "
-        "System.effective_zone_setpoints(zone_id) for target temperatures.",
+        "Use System.effective_zone_setpoints(zone_id) for target temperatures.",
         category=DeprecationWarning,
     )
     def heat_set_point(self) -> float:
         """Return Carrier's raw status heat set point.
 
         Deprecated:
-            Use ``_heat_set_point`` for raw Carrier status, or
-            ``System.effective_zone_setpoints(zone_id)`` for target
-            temperatures resolved from config when status lags.
+            Use ``System.effective_zone_setpoints(zone_id)`` for resolved target
+            temperatures. Access ``_heat_set_point`` only for raw status values.
 
         Returns:
             Carrier's raw status heat set point.
@@ -109,8 +107,7 @@ class StatusZone:
 
     @heat_set_point.setter
     @warnings.deprecated(
-        "Use _heat_set_point for raw Carrier status, or "
-        "System.effective_zone_setpoints(zone_id) for target temperatures.",
+        "Use System.effective_zone_setpoints(zone_id) for target temperatures.",
         category=DeprecationWarning,
     )
     def heat_set_point(self, value: float) -> None:
@@ -123,17 +120,15 @@ class StatusZone:
 
     @property
     @warnings.deprecated(
-        "Use _cool_set_point for raw Carrier status, or "
-        "System.effective_zone_setpoints(zone_id) for target temperatures.",
+        "Use System.effective_zone_setpoints(zone_id) for target temperatures.",
         category=DeprecationWarning,
     )
     def cool_set_point(self) -> float:
         """Return Carrier's raw status cool set point.
 
         Deprecated:
-            Use ``_cool_set_point`` for raw Carrier status, or
-            ``System.effective_zone_setpoints(zone_id)`` for target
-            temperatures resolved from config when status lags.
+            Use ``System.effective_zone_setpoints(zone_id)`` for resolved target
+            temperatures. Access ``_cool_set_point`` only for raw status values.
 
         Returns:
             Carrier's raw status cool set point.
@@ -142,8 +137,7 @@ class StatusZone:
 
     @cool_set_point.setter
     @warnings.deprecated(
-        "Use _cool_set_point for raw Carrier status, or "
-        "System.effective_zone_setpoints(zone_id) for target temperatures.",
+        "Use System.effective_zone_setpoints(zone_id) for target temperatures.",
         category=DeprecationWarning,
     )
     def cool_set_point(self, value: float) -> None:
