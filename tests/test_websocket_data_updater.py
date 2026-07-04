@@ -24,7 +24,6 @@ TEST_ZONE_ID = 1
 DEFAULT_STATUS_SETPOINTS = (74.0, 78.0)
 DEFAULT_MANUAL_SETPOINTS = (65.0, 75.0)
 TEST_REPLAY_KEY = (TEST_DEVICE_ID, str(TEST_ZONE_ID))
-OMIT_SETPOINT = object()
 
 
 @pytest.fixture
@@ -422,8 +421,8 @@ def _manual_status_update(
     """Build a compact manual status zone update for replay-focused tests.
 
     Args:
-        heat_set_point: Heat set point to include, or ``OMIT_SETPOINT`` to omit.
-        cool_set_point: Cool set point to include, or ``OMIT_SETPOINT`` to omit.
+        heat_set_point: Heat set point to include.
+        cool_set_point: Cool set point to include.
         **zone_update: Zone fields that override the default manual payload.
 
     Returns:
@@ -433,11 +432,9 @@ def _manual_status_update(
         "id": TEST_ZONE_ID,
         "currentActivity": "manual",
         "hold": "on",
+        "htsp": heat_set_point,
+        "clsp": cool_set_point,
     }
-    if heat_set_point is not OMIT_SETPOINT:
-        update["htsp"] = heat_set_point
-    if cool_set_point is not OMIT_SETPOINT:
-        update["clsp"] = cool_set_point
     update.update(zone_update)
     return update
 
@@ -596,10 +593,11 @@ async def test_status_zone_manual_activity_only_payload_uses_config_setpoints(
 
     await _send_zone_status(
         data_updater,
-        _manual_status_update(
-            heat_set_point=OMIT_SETPOINT,
-            cool_set_point=OMIT_SETPOINT,
-        ),
+        {
+            "id": TEST_ZONE_ID,
+            "currentActivity": "manual",
+            "hold": "on",
+        },
     )
 
     _assert_zone_setpoints(carrier_system, *DEFAULT_MANUAL_SETPOINTS)
@@ -674,7 +672,12 @@ async def test_status_zone_manual_activity_partial_status_disproves_replay_only_
 
     await _send_zone_status(
         data_updater,
-        _manual_status_update(heat_set_point=73, cool_set_point=OMIT_SETPOINT),
+        {
+            "id": TEST_ZONE_ID,
+            "currentActivity": "manual",
+            "hold": "on",
+            "htsp": 73,
+        },
     )
     assert TEST_REPLAY_KEY not in data_updater._manual_status_replays
     _assert_zone_setpoints(carrier_system, 73, DEFAULT_STATUS_SETPOINTS[1])

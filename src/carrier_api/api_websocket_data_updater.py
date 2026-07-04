@@ -38,25 +38,6 @@ def find_by_id(collection: list[dict], item_id: str) -> dict:
     raise ValueError(f"id: {item_id} not found in collection")
 
 
-def _manual_activity(zone: dict[str, Any]) -> dict[str, Any] | None:
-    """Return the manual activity payload from a raw config zone.
-
-    Args:
-        zone: Raw config zone payload containing activity definitions.
-
-    Returns:
-        The matching manual activity payload, or ``None`` when unavailable.
-    """
-    return next(
-        (
-            activity
-            for activity in zone.get("activities", [])
-            if str(activity.get("type")) == ActivityTypes.MANUAL.value
-        ),
-        None,
-    )
-
-
 def _align_manual_status_setpoints_with_config(
     system: System,
     zone: dict[str, Any],
@@ -93,9 +74,17 @@ def _align_manual_status_setpoints_with_config(
     except ValueError:
         return False
 
-    if not _status_payload_is_manual(
-        zone, _activity_type(raw_status_zone.get("currentActivity"))
-    ) and not _config_payload_is_manual(config_zone):
+    incoming_activity_value = zone.get("currentActivity")
+    status_is_manual = (
+        _activity_type(incoming_activity_value) is ActivityTypes.MANUAL
+        if incoming_activity_value is not None
+        else _activity_type(raw_status_zone.get("currentActivity")) is ActivityTypes.MANUAL
+    )
+    config_is_manual = (
+        config_zone.get("hold") in ("on", True, 1)
+        and config_zone.get("holdActivity") == ActivityTypes.MANUAL.value
+    )
+    if not status_is_manual and not config_is_manual:
         return False
 
     incoming_pair = _raw_set_point_pair(zone)
@@ -159,33 +148,6 @@ def _activity_type(value: Any) -> ActivityTypes | None:
         return None
 
 
-def _status_payload_is_manual(
-    zone: dict[str, Any],
-    raw_status_activity: ActivityTypes | None,
-) -> bool:
-    """Return whether the incoming or current status activity is manual.
-
-    Args:
-        zone: Incoming status zone payload.
-        raw_status_activity: Current raw status activity before merging.
-
-    Returns:
-        ``True`` when the incoming payload or existing raw status is manual.
-    """
-    incoming_activity = zone.get("currentActivity")
-    if incoming_activity is not None:
-        return _activity_type(incoming_activity) is ActivityTypes.MANUAL
-    return raw_status_activity is ActivityTypes.MANUAL
-
-
-def _config_payload_is_manual(zone: dict[str, Any]) -> bool:
-    """Return whether a config zone is in manual hold mode."""
-    return (
-        zone.get("hold") in ("on", True, 1)
-        and zone.get("holdActivity") == ActivityTypes.MANUAL.value
-    )
-
-
 def _raw_set_point_pair(zone: dict[str, Any]) -> SetPointPair | None:
     """Return a finite heat/cool set point pair from a raw zone payload.
 
@@ -246,14 +208,6 @@ class WebsocketDataUpdater:
             if system.profile.serial == serial_id:
                 return system
         raise ValueError(f"No carrier_system found for serial {serial_id}")
-
-    def _clear_replay_state(self, replay_key: tuple[str, str]) -> None:
-        """Clear all stale manual replay tracking for a zone.
-
-        Args:
-            replay_key: System serial and zone ID key for candidate tracking.
-        """
-        self._manual_status_replays.pop(replay_key, None)
 
     async def message_handler(self, websocket_message: str) -> None:
         """Apply one raw Carrier websocket message to the matching system.
@@ -362,13 +316,13 @@ class WebsocketDataUpdater:
             return
         incoming_pair = _raw_set_point_pair(zone)
         if incoming_pair == manual_pair:
-            self._clear_replay_state(replay_key)
+            self._manual_status_replays.pop(replay_key, None)
             return
         if zone.get("hold") not in (None, "on"):
-            self._clear_replay_state(replay_key)
+            self._manual_status_replays.pop(replay_key, None)
             return
         if "currentActivity" in zone and zone["currentActivity"] != ActivityTypes.MANUAL.value:
-            self._clear_replay_state(replay_key)
+            self._manual_status_replays.pop(replay_key, None)
             return
         if incoming_pair is None:
             incoming_heat_set_point = _float_set_point(zone.get("htsp"))
@@ -381,7 +335,7 @@ class WebsocketDataUpdater:
                 for stale_heat_set_point, _ in stale_set_points
             )
             if incoming_heat_disproves_replay:
-                self._clear_replay_state(replay_key)
+                self._manual_status_replays.pop(replay_key, None)
                 return
             incoming_cool_disproves_replay = all(
                 incoming_cool_set_point is not None
@@ -389,11 +343,11 @@ class WebsocketDataUpdater:
                 for _, stale_cool_set_point in stale_set_points
             )
             if incoming_cool_disproves_replay:
-                self._clear_replay_state(replay_key)
+                self._manual_status_replays.pop(replay_key, None)
                 return
             return
         if incoming_pair not in stale_set_points:
-            self._clear_replay_state(replay_key)
+            self._manual_status_replays.pop(replay_key, None)
 
     def _update_manual_replay_candidate(
         self,
@@ -409,26 +363,33 @@ class WebsocketDataUpdater:
             previous_status_set_points: Status set points before the config merge.
         """
         if zone.get("hold") != "on" or zone.get("holdActivity") != ActivityTypes.MANUAL.value:
-            self._clear_replay_state(replay_key)
+            self._manual_status_replays.pop(replay_key, None)
             return
 
-        manual_activity = _manual_activity(zone)
+        manual_activity = next(
+            (
+                activity
+                for activity in zone.get("activities", [])
+                if str(activity.get("type")) == ActivityTypes.MANUAL.value
+            ),
+            None,
+        )
         if manual_activity is None:
-            self._clear_replay_state(replay_key)
+            self._manual_status_replays.pop(replay_key, None)
             return
 
         manual_heat_set_point = _float_set_point(manual_activity.get("htsp"))
         manual_cool_set_point = _float_set_point(manual_activity.get("clsp"))
         if manual_heat_set_point is None or manual_cool_set_point is None:
-            self._clear_replay_state(replay_key)
+            self._manual_status_replays.pop(replay_key, None)
             return
         if previous_status_set_points is None:
-            self._clear_replay_state(replay_key)
+            self._manual_status_replays.pop(replay_key, None)
             return
 
         manual_set_points = (manual_heat_set_point, manual_cool_set_point)
         if previous_status_set_points == manual_set_points:
-            self._clear_replay_state(replay_key)
+            self._manual_status_replays.pop(replay_key, None)
             return
 
         stale_set_points = []
