@@ -257,16 +257,16 @@ async def test_status_zone_activity_message_handler(
         websocket_message_str: Raw zone activity websocket message fixture.
     """
     assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.WAKE
-    assert carrier_system.status.zones[0].heat_set_point == 74
-    assert carrier_system.status.zones[0].cool_set_point == 78
+    assert carrier_system.status.zones[0]._heat_set_point == 74
+    assert carrier_system.status.zones[0]._cool_set_point == 78
     await data_updater.message_handler(websocket_message_str)
     assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.HOME
-    assert carrier_system.status.zones[0].heat_set_point == 77
-    assert carrier_system.status.zones[0].cool_set_point == 79
+    assert carrier_system.status.zones[0]._heat_set_point == 77
+    assert carrier_system.status.zones[0]._cool_set_point == 79
     reprocessed_status = Status(raw=carrier_system.status.raw)
     assert reprocessed_status.zones[0].current_status_activity_type == ActivityTypes.HOME
-    assert reprocessed_status.zones[0].heat_set_point == 77
-    assert reprocessed_status.zones[0].cool_set_point == 79
+    assert reprocessed_status.zones[0]._heat_set_point == 77
+    assert reprocessed_status.zones[0]._cool_set_point == 79
 
 
 @pytest.mark.asyncio
@@ -330,14 +330,14 @@ async def test_status_zone_htsp_message_handler(
         carrier_system: Prepared system model that receives the update.
         websocket_message_str: Raw zone set point websocket message fixture.
     """
-    assert carrier_system.status.zones[0].heat_set_point == 74
-    assert carrier_system.status.zones[0].cool_set_point == 78
+    assert carrier_system.status.zones[0]._heat_set_point == 74
+    assert carrier_system.status.zones[0]._cool_set_point == 78
     await data_updater.message_handler(websocket_message_str)
-    assert carrier_system.status.zones[0].heat_set_point == 72
-    assert carrier_system.status.zones[0].cool_set_point == 85
+    assert carrier_system.status.zones[0]._heat_set_point == 72
+    assert carrier_system.status.zones[0]._cool_set_point == 85
     reprocessed_status = Status(raw=carrier_system.status.raw)
-    assert reprocessed_status.zones[0].heat_set_point == 72
-    assert reprocessed_status.zones[0].cool_set_point == 85
+    assert reprocessed_status.zones[0]._heat_set_point == 72
+    assert reprocessed_status.zones[0]._cool_set_point == 85
 
 
 @pytest.mark.asyncio

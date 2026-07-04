@@ -15,6 +15,9 @@ COOL_CAPABILITY_FIELDS = ("cooling", "loop_pump")
 FAN_CAPABILITY_FIELDS = ("fan", "fan_gas")
 
 
+ZoneSetPoints = dict[str, float]
+
+
 class System:
     """Carrier system composed from profile, status, config, and energy data."""
 
@@ -95,6 +98,47 @@ class System:
             "heat": self.supports_heat(),
             "cool": self.supports_cool(),
             "fan": self.supports_fan(),
+        }
+
+    def effective_zone_setpoints(self, zone_id: str) -> ZoneSetPoints:
+        """Return target set points for a zone, preferring config activity data.
+
+        Carrier status set points can lag after a target change. The status
+        zone still reports the active activity type, so resolve that activity in
+        config and use its set points when available.
+
+        Args:
+            zone_id: Carrier zone ID to inspect.
+
+        Returns:
+            Heat and cool target set points for the zone.
+
+        Raises:
+            ValueError: If no enabled status zone has the requested ID.
+        """
+        status_zone = next(
+            (zone for zone in self.status.zones if str(zone.api_id) == str(zone_id)),
+            None,
+        )
+        if status_zone is None:
+            raise ValueError(f"zone_id: {zone_id} not found")
+
+        config_zone = next(
+            (zone for zone in self.config.zones if str(zone.api_id) == str(zone_id)),
+            None,
+        )
+        setpoint_source = (
+            config_zone.current_status_activity(status_zone) if config_zone is not None else None
+        ) or status_zone
+        if setpoint_source is status_zone:
+            status_zone_data = status_zone.as_dict()
+            return {
+                "heat_set_point": status_zone_data["heat_set_point"],
+                "cool_set_point": status_zone_data["cool_set_point"],
+            }
+        return {
+            "heat_set_point": setpoint_source.heat_set_point,
+            "cool_set_point": setpoint_source.cool_set_point,
         }
 
     def _supports_any_energy_capability(self, capability_fields: tuple[str, ...]) -> bool:

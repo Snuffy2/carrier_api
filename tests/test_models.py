@@ -290,6 +290,20 @@ def test_status_modes_zone_conditioning_and_serialization(
         _ = unknown_status.mode_const
 
 
+def test_status_zone_set_point_properties_are_deprecated(
+    system_response: dict[str, Any],
+) -> None:
+    """Warn callers to use raw private fields or effective system set points."""
+    zone = Status(system_response["infinitySystems"][0]["status"]).zones[0]
+
+    assert zone._heat_set_point == 74
+    assert zone._cool_set_point == 78
+    with pytest.deprecated_call(match="Use _heat_set_point"):
+        assert zone.heat_set_point == 74
+    with pytest.deprecated_call(match="Use _cool_set_point"):
+        assert zone.cool_set_point == 78
+
+
 def test_config_schedule_branches_and_serialization(system_response: dict[str, Any]) -> None:
     """Cover config activity lookup, schedule branches, and serialization.
 
@@ -487,6 +501,61 @@ def test_system_as_dict_uses_nested_model_dictionaries(
         system.as_dict()["config"]["zones"][0]["current_activity"]["from_status"]["type"] == "wake"
     )
     assert repr(system) == str(system.as_dict())
+
+
+def test_system_effective_zone_setpoints_use_status_resolved_config_activity(
+    system_response: dict[str, Any],
+    energy_response: dict[str, Any],
+) -> None:
+    """Read effective targets from the activity Carrier reports as current."""
+    raw_system = deepcopy(system_response["infinitySystems"][0])
+    raw_system["status"]["zones"][0]["currentActivity"] = "manual"
+    raw_system["status"]["zones"][0]["htsp"] = "70"
+    raw_system["status"]["zones"][0]["clsp"] = "80"
+    manual_activity = next(
+        activity
+        for activity in raw_system["config"]["zones"][0]["activities"]
+        if activity["type"] == "manual"
+    )
+    manual_activity["htsp"] = "66"
+    manual_activity["clsp"] = "76"
+    system = System(
+        Profile(raw_system["profile"]),
+        Status(raw_system["status"]),
+        Config(raw_system["config"]),
+        Energy(energy_response["infinityEnergy"]),
+    )
+
+    assert system.effective_zone_setpoints("1") == {
+        "heat_set_point": 66.0,
+        "cool_set_point": 76.0,
+    }
+
+
+def test_system_effective_zone_setpoints_fall_back_to_status(
+    system_response: dict[str, Any],
+    energy_response: dict[str, Any],
+) -> None:
+    """Use raw status targets when no matching config activity is available."""
+    raw_system = deepcopy(system_response["infinitySystems"][0])
+    raw_system["config"]["zones"][0]["activities"] = [
+        activity
+        for activity in raw_system["config"]["zones"][0]["activities"]
+        if activity["type"] != raw_system["status"]["zones"][0]["currentActivity"]
+    ]
+    system = System(
+        Profile(raw_system["profile"]),
+        Status(raw_system["status"]),
+        Config(raw_system["config"]),
+        Energy(energy_response["infinityEnergy"]),
+    )
+
+    assert system.effective_zone_setpoints("1") == {
+        "heat_set_point": 74.0,
+        "cool_set_point": 78.0,
+    }
+    with pytest.raises(ValueError, match="zone_id: missing not found"):
+        system.effective_zone_setpoints("missing")
 
 
 def test_system_reports_supported_hvac_capabilities_from_equipment_and_config(

@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Any
+import warnings
 
 from dateutil.parser import isoparse
 
@@ -82,10 +83,76 @@ class StatusZone:
         self.fan: FanModes = FanModes(status_zone_json["fan"])
         self.hold: bool = safely_get_json_value(status_zone_json, "hold") == "on"
         self.hold_until: str = safely_get_json_value(status_zone_json, "otmr")
-        self.heat_set_point: float = safely_get_json_value(status_zone_json, "htsp", float)
-        self.cool_set_point: float = safely_get_json_value(status_zone_json, "clsp", float)
+        self._heat_set_point: float = safely_get_json_value(status_zone_json, "htsp", float)
+        self._cool_set_point: float = safely_get_json_value(status_zone_json, "clsp", float)
         self.conditioning: str = safely_get_json_value(status_zone_json, "zoneconditioning")
         self.damper_position: int = safely_get_json_value(status_zone_json, "damperposition", int)
+
+    @property
+    @warnings.deprecated(
+        "Use _heat_set_point for raw Carrier status, or "
+        "System.effective_zone_setpoints(zone_id) for target temperatures.",
+        category=DeprecationWarning,
+    )
+    def heat_set_point(self) -> float:
+        """Return Carrier's raw status heat set point.
+
+        Deprecated:
+            Use ``_heat_set_point`` for raw Carrier status, or
+            ``System.effective_zone_setpoints(zone_id)`` for target
+            temperatures resolved from config when status lags.
+
+        Returns:
+            Carrier's raw status heat set point.
+        """
+        return self._heat_set_point
+
+    @heat_set_point.setter
+    @warnings.deprecated(
+        "Use _heat_set_point for raw Carrier status, or "
+        "System.effective_zone_setpoints(zone_id) for target temperatures.",
+        category=DeprecationWarning,
+    )
+    def heat_set_point(self, value: float) -> None:
+        """Set Carrier's raw status heat set point through the deprecated alias.
+
+        Args:
+            value: Raw heat set point to store.
+        """
+        self._heat_set_point = value
+
+    @property
+    @warnings.deprecated(
+        "Use _cool_set_point for raw Carrier status, or "
+        "System.effective_zone_setpoints(zone_id) for target temperatures.",
+        category=DeprecationWarning,
+    )
+    def cool_set_point(self) -> float:
+        """Return Carrier's raw status cool set point.
+
+        Deprecated:
+            Use ``_cool_set_point`` for raw Carrier status, or
+            ``System.effective_zone_setpoints(zone_id)`` for target
+            temperatures resolved from config when status lags.
+
+        Returns:
+            Carrier's raw status cool set point.
+        """
+        return self._cool_set_point
+
+    @cool_set_point.setter
+    @warnings.deprecated(
+        "Use _cool_set_point for raw Carrier status, or "
+        "System.effective_zone_setpoints(zone_id) for target temperatures.",
+        category=DeprecationWarning,
+    )
+    def cool_set_point(self, value: float) -> None:
+        """Set Carrier's raw status cool set point through the deprecated alias.
+
+        Args:
+            value: Raw cool set point to store.
+        """
+        self._cool_set_point = value
 
     @property
     def current_activity(self) -> ActivityTypes:
@@ -153,8 +220,8 @@ class StatusZone:
             "hold": self.hold,
             "occupancy": self.occupancy,
             "hold_until": self.hold_until,
-            "heat_set_point": self.heat_set_point,
-            "cool_set_point": self.cool_set_point,
+            "heat_set_point": self._heat_set_point,
+            "cool_set_point": self._cool_set_point,
             "conditioning": self.conditioning,
         }
 
