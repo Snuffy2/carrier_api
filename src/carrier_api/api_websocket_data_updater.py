@@ -355,6 +355,8 @@ class WebsocketDataUpdater:
                 _config_id = websocket_message_json.pop("infinitySystemConfigurationId", None)
                 _LOGGER.debug("InfinityConfig received: %s", websocket_message)
                 zones = websocket_message_json.pop("zones", [])
+                has_stale_zone = False
+                has_applied_zone = False
                 for zone in zones:
                     zone_timestamp = _parse_websocket_timestamp(zone.pop("timestamp", None))
                     if "id" not in zone:
@@ -365,6 +367,7 @@ class WebsocketDataUpdater:
                         replay_key=replay_key,
                         zone_timestamp=zone_timestamp,
                     ):
+                        has_stale_zone = True
                         continue
                     _normalize_zone_hold(zone)
                     try:
@@ -401,11 +404,13 @@ class WebsocketDataUpdater:
                         previous_status_set_points=previous_status_set_points,
                         allow_incoming_manual_hold_only=hold_activity_only,
                     )
+                    has_applied_zone = True
                     self._update_config_watermark(
                         replay_key=replay_key,
                         zone_timestamp=zone_timestamp,
                     )
-                always_merger.merge(system.config.raw, websocket_message_json)
+                if not (has_stale_zone and not has_applied_zone):
+                    always_merger.merge(system.config.raw, websocket_message_json)
                 system.config = Config(system.config.raw)
             case _:
                 _LOGGER.error("Received unknown message: %s", websocket_message)

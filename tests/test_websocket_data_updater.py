@@ -935,6 +935,64 @@ async def test_infinity_config_stale_frame_with_newer_status_does_not_roll_back_
 
 
 @pytest.mark.asyncio
+async def test_infinity_config_stale_zone_updates_do_not_roll_back_top_level_keys(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Keep newer top-level config state when a stale zone update is rejected."""
+    initial_vacmint = carrier_system.config.raw["vacmint"]
+
+    await _send_zone_config(
+        data_updater,
+        heat_set_point=66.0,
+        cool_set_point=76.0,
+        timestamp="2026-07-04T16:00:00.000Z",
+    )
+    await _send_zone_status(
+        data_updater,
+        _manual_status_update(heat_set_point=70.0, cool_set_point=80.0),
+        timestamp="2026-07-04T16:30:00.000Z",
+    )
+    manual_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.MANUAL)
+    assert manual_activity is not None
+    assert (manual_activity.heat_set_point, manual_activity.cool_set_point) == (66.0, 76.0)
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": TEST_DEVICE_ID,
+                "zones": [
+                    {
+                        "id": TEST_ZONE_ID,
+                        "hold": "on",
+                        "holdActivity": "manual",
+                        "timestamp": "2026-07-04T15:00:00.000Z",
+                        "activities": [
+                            {
+                                "id": str(TEST_ZONE_ID),
+                                "type": "manual",
+                                "htsp": 65.0,
+                                "clsp": 75.0,
+                            }
+                        ],
+                    }
+                ],
+                "vacmint": 10,
+            }
+        )
+    )
+
+    stale_manual_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.MANUAL)
+    assert stale_manual_activity is not None
+    assert (stale_manual_activity.heat_set_point, stale_manual_activity.cool_set_point) == (
+        66.0,
+        76.0,
+    )
+    assert carrier_system.config.raw["vacmint"] == initial_vacmint
+
+
+@pytest.mark.asyncio
 async def test_infinity_config_out_of_order_without_status_does_not_rewrite_config(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
