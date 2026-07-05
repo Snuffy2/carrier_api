@@ -7,6 +7,7 @@ from logging import getLogger
 from deepmerge import always_merger
 
 from .config import Config
+from .const import ActivityTypes
 from .status import Status
 from .system import System
 from .util import safely_get_json_value
@@ -143,6 +144,27 @@ class WebsocketDataUpdater:
                     str(status_zone["id"]): status_zone
                     for status_zone in system.status.raw["zones"]
                 }
+                vacation_heat_target_changed = (
+                    "vacmint" in websocket_message_json
+                    and safely_get_json_value(websocket_message_json, "vacmint", float)
+                    != safely_get_json_value(system.config.raw, "vacmint", float)
+                )
+                vacation_cool_target_changed = (
+                    "vacmaxt" in websocket_message_json
+                    and safely_get_json_value(websocket_message_json, "vacmaxt", float)
+                    != safely_get_json_value(system.config.raw, "vacmaxt", float)
+                )
+                if vacation_heat_target_changed or vacation_cool_target_changed:
+                    for status_zone in status_zone_by_id.values():
+                        if status_zone.get("currentActivity") == ActivityTypes.VACATION.value:
+                            if vacation_heat_target_changed:
+                                status_zone["_setpointsStaleForActivityHeat"] = True
+                            if vacation_cool_target_changed:
+                                status_zone["_setpointsStaleForActivityCool"] = True
+                            status_zone["_setpointsStaleForActivity"] = bool(
+                                status_zone.get("_setpointsStaleForActivityHeat", False)
+                                or status_zone.get("_setpointsStaleForActivityCool", False)
+                            )
                 for zone in zones:
                     _timestamp = zone.pop("timestamp", None)
                     if "id" in zone:

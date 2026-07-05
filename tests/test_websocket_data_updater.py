@@ -613,6 +613,52 @@ async def test_config_zone_activity_update_without_type_marks_stale_setpoints(
 
 
 @pytest.mark.asyncio
+async def test_config_vacation_target_update_marks_vacation_status_stale(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Use updated vacation config targets when status reports vacation activity."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": "1",
+                        "currentActivity": "vacation",
+                        "htsp": 60.0,
+                        "clsp": 80.0,
+                    }
+                ],
+                "timestamp": "2025-03-29T01:11:00.000Z",
+            }
+        )
+    )
+    assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.VACATION
+    assert not carrier_system.status.zones[0].setpoints_stale_for_activity
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "vacmint": 62,
+                "vacmaxt": 82,
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].setpoints_stale_for_activity
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 62.0,
+        "cool_set_point": 82.0,
+    }
+    assert carrier_system.status.zones[0]._heat_set_point == 60.0
+    assert carrier_system.status.zones[0]._cool_set_point == 80.0
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("websocket_message_str", ["messages/config_zone_hold.json"], indirect=True)
 async def test_config_zone_hold_message_handler(
     data_updater: WebsocketDataUpdater,
