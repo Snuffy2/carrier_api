@@ -503,6 +503,19 @@ def test_system_as_dict_uses_nested_model_dictionaries(
     assert repr(system) == str(system.as_dict())
 
 
+def _system_from_raw(
+    raw_system: dict[str, Any],
+    energy_response: dict[str, Any],
+) -> System:
+    """Build a System aggregate from raw system and energy payload slices."""
+    return System(
+        Profile(raw_system["profile"]),
+        Status(raw_system["status"]),
+        Config(raw_system["config"]),
+        Energy(energy_response["infinityEnergy"]),
+    )
+
+
 def test_system_effective_zone_setpoints_use_status_resolved_config_activity(
     system_response: dict[str, Any],
     energy_response: dict[str, Any],
@@ -519,12 +532,7 @@ def test_system_effective_zone_setpoints_use_status_resolved_config_activity(
     )
     manual_activity["htsp"] = "66"
     manual_activity["clsp"] = "76"
-    system = System(
-        Profile(raw_system["profile"]),
-        Status(raw_system["status"]),
-        Config(raw_system["config"]),
-        Energy(energy_response["infinityEnergy"]),
-    )
+    system = _system_from_raw(raw_system, energy_response)
 
     assert system.effective_zone_setpoints("1") == {
         "heat_set_point": 70.0,
@@ -541,12 +549,7 @@ def test_system_effective_zone_setpoints_prefers_fresh_status_when_matching_othe
     raw_system["status"]["zones"][0]["currentActivity"] = "wake"
     raw_system["status"]["zones"][0]["htsp"] = "77"
     raw_system["status"]["zones"][0]["clsp"] = "79"
-    system = System(
-        Profile(raw_system["profile"]),
-        Status(raw_system["status"]),
-        Config(raw_system["config"]),
-        Energy(energy_response["infinityEnergy"]),
-    )
+    system = _system_from_raw(raw_system, energy_response)
 
     assert system.effective_zone_setpoints("1") == {
         "heat_set_point": 77.0,
@@ -570,12 +573,7 @@ def test_system_effective_zone_setpoints_prefers_status_for_non_manual_activity(
     )
     manual_activity["htsp"] = "66"
     manual_activity["clsp"] = "76"
-    system = System(
-        Profile(raw_system["profile"]),
-        Status(raw_system["status"]),
-        Config(raw_system["config"]),
-        Energy(energy_response["infinityEnergy"]),
-    )
+    system = _system_from_raw(raw_system, energy_response)
 
     assert system.effective_zone_setpoints("1") == {
         "heat_set_point": 70.0,
@@ -594,12 +592,7 @@ def test_system_effective_zone_setpoints_fall_back_to_status(
         for activity in raw_system["config"]["zones"][0]["activities"]
         if activity["type"] != raw_system["status"]["zones"][0]["currentActivity"]
     ]
-    system = System(
-        Profile(raw_system["profile"]),
-        Status(raw_system["status"]),
-        Config(raw_system["config"]),
-        Energy(energy_response["infinityEnergy"]),
-    )
+    system = _system_from_raw(raw_system, energy_response)
 
     assert system.effective_zone_setpoints("1") == {
         "heat_set_point": 74.0,
@@ -619,12 +612,7 @@ def test_system_effective_zone_setpoints_prefers_config_for_activity_only_status
     raw_system["status"]["zones"][0]["htsp"] = "74"
     raw_system["status"]["zones"][0]["clsp"] = "78"
     raw_system["status"]["zones"][0]["_setpointsStaleForActivity"] = True
-    system = System(
-        Profile(raw_system["profile"]),
-        Status(raw_system["status"]),
-        Config(raw_system["config"]),
-        Energy(energy_response["infinityEnergy"]),
-    )
+    system = _system_from_raw(raw_system, energy_response)
 
     assert system.effective_zone_setpoints("1") == {
         "heat_set_point": 77.0,
