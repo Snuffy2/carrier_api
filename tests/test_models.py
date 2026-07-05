@@ -546,11 +546,26 @@ def test_system_effective_zone_setpoints_prefers_fresh_status_when_matching_othe
 ) -> None:
     """Use raw status targets when they are fresh and match another activity profile."""
     raw_system = deepcopy(system_response["infinitySystems"][0])
-    raw_system["status"]["zones"][0]["currentActivity"] = "wake"
-    raw_system["status"]["zones"][0]["htsp"] = "77"
-    raw_system["status"]["zones"][0]["clsp"] = "79"
+    status_zone = raw_system["status"]["zones"][0]
+    status_zone["currentActivity"] = "wake"
+    status_zone["htsp"] = "77"
+    status_zone["clsp"] = "79"
+    status_zone["_setpointsStaleForActivityHeat"] = False
+    status_zone["_setpointsStaleForActivityCool"] = False
+    wake_activity = next(
+        activity
+        for activity in raw_system["config"]["zones"][0]["activities"]
+        if activity["type"] == "wake"
+    )
+    home_activity = next(
+        activity
+        for activity in raw_system["config"]["zones"][0]["activities"]
+        if activity["type"] == "home"
+    )
     system = _system_from_raw(raw_system, energy_response)
 
+    assert (wake_activity["htsp"], wake_activity["clsp"]) == ("74", "78")
+    assert (home_activity["htsp"], home_activity["clsp"]) == ("77", "79")
     assert system.effective_zone_setpoints("1") == {
         "heat_set_point": 77.0,
         "cool_set_point": 79.0,
