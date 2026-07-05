@@ -95,12 +95,11 @@ class WebsocketDataUpdater:
                 for zone in zones:
                     _timestamp = zone.pop("timestamp", None)
                     stale_zone = find_by_id(system.status.raw["zones"], zone["id"])
-                    current_activity = zone.get("currentActivity")
                     incoming_activity_only = (
                         "currentActivity" in zone and "htsp" not in zone and "clsp" not in zone
                     )
                     if "currentActivity" in zone:
-                        if incoming_activity_only and current_activity != stale_zone.get(
+                        if incoming_activity_only and zone["currentActivity"] != stale_zone.get(
                             "currentActivity"
                         ):
                             stale_zone["_setpointsStaleForActivity"] = True
@@ -145,24 +144,19 @@ class WebsocketDataUpdater:
                                 if incoming_activity is not None
                                 else find_by_id(stale_zone["activities"], activity["id"])
                             )
-                            incoming_activity_targets = "htsp" in activity or "clsp" in activity
                             if stale_activity is not None:
-                                activity_targets_changed = bool(
-                                    (
-                                        "htsp" in activity
-                                        and safely_get_json_value(activity, "htsp", float)
-                                        != safely_get_json_value(stale_activity, "htsp", float)
-                                    )
-                                    or (
-                                        "clsp" in activity
-                                        and safely_get_json_value(activity, "clsp", float)
-                                        != safely_get_json_value(stale_activity, "clsp", float)
-                                    )
+                                activity_targets_changed = (
+                                    "htsp" in activity
+                                    and safely_get_json_value(activity, "htsp", float)
+                                    != safely_get_json_value(stale_activity, "htsp", float)
+                                ) or (
+                                    "clsp" in activity
+                                    and safely_get_json_value(activity, "clsp", float)
+                                    != safely_get_json_value(stale_activity, "clsp", float)
                                 )
                                 if (
                                     status_zone is not None
                                     and status_zone.get("currentActivity") == incoming_activity
-                                    and incoming_activity_targets
                                     and activity_targets_changed
                                 ):
                                     status_zone["_setpointsStaleForActivity"] = True
