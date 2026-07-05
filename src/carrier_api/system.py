@@ -1,7 +1,7 @@
 """Aggregate model for a Carrier system and its related state."""
 
 from logging import getLogger
-from typing import Any
+from typing import Any, TypedDict
 
 from .config import Config
 from .energy import Energy
@@ -15,7 +15,11 @@ COOL_CAPABILITY_FIELDS = ("cooling", "loop_pump")
 FAN_CAPABILITY_FIELDS = ("fan", "fan_gas")
 
 
-ZoneSetPoints = dict[str, float]
+class ZoneSetPoints(TypedDict):
+    """Effective heat and cool set points for a Carrier zone."""
+
+    heat_set_point: float
+    cool_set_point: float
 
 
 class System:
