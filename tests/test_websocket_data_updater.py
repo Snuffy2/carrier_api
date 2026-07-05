@@ -469,6 +469,45 @@ async def test_status_zone_partial_setpoint_update_resolves_missing_target_from_
 
 
 @pytest.mark.asyncio
+async def test_status_zone_partial_setpoint_update_marks_omitted_target_stale_on_activity_change(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Treat a one-target status delta as stale for the omitted target after activity change."""
+    assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.WAKE
+    away_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.AWAY)
+    assert away_activity is not None
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": "1",
+                        "currentActivity": "away",
+                        "htsp": 72,
+                    }
+                ],
+                "timestamp": "2025-03-29T01:12:00.000Z",
+            }
+        )
+    )
+
+    zone = carrier_system.status.zones[0]
+    assert zone.current_status_activity_type == ActivityTypes.AWAY
+    assert zone._heat_set_point == 72.0
+    assert zone._cool_set_point == 78.0
+    assert zone.setpoints_stale_for_activity_heat is False
+    assert zone.setpoints_stale_for_activity_cool is True
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 72.0,
+        "cool_set_point": away_activity.cool_set_point,
+    }
+
+
+@pytest.mark.asyncio
 async def test_config_zone_activity_update_for_status_activity_marks_stale_setpoints(
     data_updater: WebsocketDataUpdater,
     carrier_system: System,
@@ -563,11 +602,14 @@ async def test_config_zone_activity_update_without_type_marks_stale_setpoints(
         )
     )
     assert carrier_system.status.zones[0].setpoints_stale_for_activity
+    assert carrier_system.status.zones[0].setpoints_stale_for_activity_heat
+    assert not carrier_system.status.zones[0].setpoints_stale_for_activity_cool
     assert carrier_system.effective_zone_setpoints("1") == {
         "heat_set_point": 70.0,
-        "cool_set_point": 85.0,
+        "cool_set_point": 80.0,
     }
     assert carrier_system.status.zones[0]._heat_set_point == 60.0
+    assert carrier_system.status.zones[0]._cool_set_point == 80.0
 
 
 @pytest.mark.asyncio
