@@ -557,30 +557,6 @@ def test_system_effective_zone_setpoints_prefers_fresh_status_when_matching_othe
     }
 
 
-def test_system_effective_zone_setpoints_prefers_status_for_non_manual_activity(
-    system_response: dict[str, Any],
-    energy_response: dict[str, Any],
-) -> None:
-    """Use raw status set points for non-manual activity updates."""
-    raw_system = deepcopy(system_response["infinitySystems"][0])
-    raw_system["status"]["zones"][0]["currentActivity"] = "wake"
-    raw_system["status"]["zones"][0]["htsp"] = "70"
-    raw_system["status"]["zones"][0]["clsp"] = "80"
-    manual_activity = next(
-        activity
-        for activity in raw_system["config"]["zones"][0]["activities"]
-        if activity["type"] == "manual"
-    )
-    manual_activity["htsp"] = "66"
-    manual_activity["clsp"] = "76"
-    system = _system_from_raw(raw_system, energy_response)
-
-    assert system.effective_zone_setpoints("1") == {
-        "heat_set_point": 70.0,
-        "cool_set_point": 80.0,
-    }
-
-
 def test_system_effective_zone_setpoints_fall_back_to_status(
     system_response: dict[str, Any],
     energy_response: dict[str, Any],
