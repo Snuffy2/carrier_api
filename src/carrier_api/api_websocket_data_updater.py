@@ -95,15 +95,41 @@ class WebsocketDataUpdater:
                 for zone in zones:
                     _timestamp = zone.pop("timestamp", None)
                     stale_zone = find_by_id(system.status.raw["zones"], zone["id"])
-                    incoming_activity_only = (
-                        "currentActivity" in zone and "htsp" not in zone and "clsp" not in zone
+                    stale_heat = bool(
+                        stale_zone.get(
+                            "_setpointsStaleForActivityHeat",
+                            stale_zone.get("_setpointsStaleForActivity", False),
+                        )
                     )
-                    if "htsp" in zone or "clsp" in zone:
-                        stale_zone["_setpointsStaleForActivity"] = False
+                    stale_cool = bool(
+                        stale_zone.get(
+                            "_setpointsStaleForActivityCool",
+                            stale_zone.get("_setpointsStaleForActivity", False),
+                        )
+                    )
+                    has_heat_set_point = "htsp" in zone
+                    has_cool_set_point = "clsp" in zone
+                    incoming_activity_only = (
+                        "currentActivity" in zone
+                        and not has_heat_set_point
+                        and not has_cool_set_point
+                    )
+                    if has_heat_set_point or has_cool_set_point:
+                        if has_heat_set_point:
+                            stale_heat = False
+                        if has_cool_set_point:
+                            stale_cool = False
+                        stale_zone["_setpointsStaleForActivityHeat"] = stale_heat
+                        stale_zone["_setpointsStaleForActivityCool"] = stale_cool
+                        stale_zone["_setpointsStaleForActivity"] = stale_heat or stale_cool
                     elif incoming_activity_only and zone["currentActivity"] != stale_zone.get(
                         "currentActivity"
                     ):
-                        stale_zone["_setpointsStaleForActivity"] = True
+                        stale_heat = True
+                        stale_cool = True
+                        stale_zone["_setpointsStaleForActivityHeat"] = stale_heat
+                        stale_zone["_setpointsStaleForActivityCool"] = stale_cool
+                        stale_zone["_setpointsStaleForActivity"] = stale_heat or stale_cool
                     always_merger.merge(stale_zone, zone)
                 merged_status = always_merger.merge(system.status.raw, websocket_message_json)
                 merged_status.update({"utcTime": datetime.now(UTC).isoformat()})
@@ -151,11 +177,18 @@ class WebsocketDataUpdater:
                                     and safely_get_json_value(activity, "clsp", float)
                                     != safely_get_json_value(stale_activity, "clsp", float)
                                 )
+                                incoming_activity_or_type = (
+                                    incoming_activity
+                                    or safely_get_json_value(stale_activity, "type")
+                                )
                                 if (
                                     status_zone is not None
-                                    and status_zone.get("currentActivity") == incoming_activity
+                                    and status_zone.get("currentActivity")
+                                    == incoming_activity_or_type
                                     and activity_targets_changed
                                 ):
+                                    status_zone["_setpointsStaleForActivityHeat"] = True
+                                    status_zone["_setpointsStaleForActivityCool"] = True
                                     status_zone["_setpointsStaleForActivity"] = True
                                 always_merger.merge(stale_activity, activity)
                         always_merger.merge(stale_zone, zone)

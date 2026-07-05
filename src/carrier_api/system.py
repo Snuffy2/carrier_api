@@ -6,7 +6,7 @@ from typing import Any
 from .config import Config
 from .energy import Energy
 from .profile import Profile
-from .status import Status, StatusZone
+from .status import Status
 
 _LOGGER = getLogger(__name__)
 
@@ -130,32 +130,26 @@ class System:
         setpoint_source = (
             config_zone.current_status_activity(status_zone) if config_zone is not None else None
         )
-        if setpoint_source is None or not self._status_setpoints_look_stale_relative_to_config(
-            status_zone
-        ):
+        if setpoint_source is None:
             status_zone_data = status_zone.as_dict()
             return {
                 "heat_set_point": status_zone_data["heat_set_point"],
                 "cool_set_point": status_zone_data["cool_set_point"],
             }
+
+        status_zone_data = status_zone.as_dict()
         return {
-            "heat_set_point": setpoint_source.heat_set_point,
-            "cool_set_point": setpoint_source.cool_set_point,
+            "heat_set_point": (
+                setpoint_source.heat_set_point
+                if status_zone.setpoints_stale_for_activity_heat
+                else status_zone_data["heat_set_point"]
+            ),
+            "cool_set_point": (
+                setpoint_source.cool_set_point
+                if status_zone.setpoints_stale_for_activity_cool
+                else status_zone_data["cool_set_point"]
+            ),
         }
-
-    def _status_setpoints_look_stale_relative_to_config(
-        self,
-        status_zone: StatusZone,
-    ) -> bool:
-        """Return whether config set points should replace raw status values.
-
-        Args:
-            status_zone: Runtime zone status to inspect.
-
-        Returns:
-            ``True`` when Carrier marked status set points stale.
-        """
-        return status_zone.setpoints_stale_for_activity
 
     def _supports_any_energy_capability(self, capability_fields: tuple[str, ...]) -> bool:
         """Return whether any named energy capability is enabled.

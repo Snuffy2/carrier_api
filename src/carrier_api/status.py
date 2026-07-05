@@ -85,8 +85,14 @@ class StatusZone:
         self.hold_until: str = safely_get_json_value(status_zone_json, "otmr")
         self._heat_set_point: float = safely_get_json_value(status_zone_json, "htsp", float)
         self._cool_set_point: float = safely_get_json_value(status_zone_json, "clsp", float)
-        self._setpoints_stale_for_activity: bool = bool(
+        status_level_stale_for_activity = bool(
             status_zone_json.get("_setpointsStaleForActivity", False)
+        )
+        self._setpoints_stale_for_activity_heat: bool = bool(
+            status_zone_json.get("_setpointsStaleForActivityHeat", status_level_stale_for_activity)
+        )
+        self._setpoints_stale_for_activity_cool: bool = bool(
+            status_zone_json.get("_setpointsStaleForActivityCool", status_level_stale_for_activity)
         )
         self.conditioning: str = safely_get_json_value(status_zone_json, "zoneconditioning")
         self.damper_position: int = safely_get_json_value(status_zone_json, "damperposition", int)
@@ -159,7 +165,17 @@ class StatusZone:
             ``True`` when the latest status update changed activity but omitted
             raw heat and cool set points.
         """
-        return self._setpoints_stale_for_activity
+        return self._setpoints_stale_for_activity_heat or self._setpoints_stale_for_activity_cool
+
+    @property
+    def setpoints_stale_for_activity_heat(self) -> bool:
+        """Return whether heat set point is stale for the current status activity."""
+        return self._setpoints_stale_for_activity_heat
+
+    @property
+    def setpoints_stale_for_activity_cool(self) -> bool:
+        """Return whether cool set point is stale for the current status activity."""
+        return self._setpoints_stale_for_activity_cool
 
     @property
     def current_activity(self) -> ActivityTypes:
