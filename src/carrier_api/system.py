@@ -1,9 +1,9 @@
 """Aggregate model for a Carrier system and its related state."""
 
 from logging import getLogger
-from typing import Any, TypeGuard
+from typing import Any
 
-from .config import Config, ConfigZoneActivity
+from .config import Config
 from .energy import Energy
 from .profile import Profile
 from .status import Status, StatusZone
@@ -130,36 +130,32 @@ class System:
         setpoint_source = (
             config_zone.current_status_activity(status_zone) if config_zone is not None else None
         )
-        if self._status_setpoints_look_stale_relative_to_config(
-            setpoint_source,
-            status_zone,
+        if setpoint_source is None or not self._status_setpoints_look_stale_relative_to_config(
+            status_zone
         ):
+            status_zone_data = status_zone.as_dict()
             return {
-                "heat_set_point": setpoint_source.heat_set_point,
-                "cool_set_point": setpoint_source.cool_set_point,
+                "heat_set_point": status_zone_data["heat_set_point"],
+                "cool_set_point": status_zone_data["cool_set_point"],
             }
-        status_zone_data = status_zone.as_dict()
         return {
-            "heat_set_point": status_zone_data["heat_set_point"],
-            "cool_set_point": status_zone_data["cool_set_point"],
+            "heat_set_point": setpoint_source.heat_set_point,
+            "cool_set_point": setpoint_source.cool_set_point,
         }
 
     def _status_setpoints_look_stale_relative_to_config(
         self,
-        setpoint_source: ConfigZoneActivity | None,
         status_zone: StatusZone,
-    ) -> TypeGuard[ConfigZoneActivity]:
+    ) -> bool:
         """Return whether config set points should replace raw status values.
 
         Args:
-            setpoint_source: Config activity matching Carrier's status activity.
             status_zone: Runtime zone status to inspect.
 
         Returns:
-            ``True`` when Carrier marked status set points stale and a matching
-            config activity can supply current set points.
+            ``True`` when Carrier marked status set points stale.
         """
-        return setpoint_source is not None and status_zone.setpoints_stale_for_activity
+        return status_zone.setpoints_stale_for_activity
 
     def _supports_any_energy_capability(self, capability_fields: tuple[str, ...]) -> bool:
         """Return whether any named energy capability is enabled.

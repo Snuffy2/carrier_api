@@ -146,10 +146,6 @@ class WebsocketDataUpdater:
                                 else find_by_id(stale_zone["activities"], activity["id"])
                             )
                             incoming_activity_targets = "htsp" in activity or "clsp" in activity
-                            stale_status_zone_matches_activity = (
-                                status_zone is not None
-                                and status_zone.get("currentActivity") == incoming_activity
-                            )
                             if stale_activity is not None:
                                 activity_targets_changed = bool(
                                     (
@@ -165,7 +161,7 @@ class WebsocketDataUpdater:
                                 )
                                 if (
                                     status_zone is not None
-                                    and stale_status_zone_matches_activity
+                                    and status_zone.get("currentActivity") == incoming_activity
                                     and incoming_activity_targets
                                     and activity_targets_changed
                                 ):
