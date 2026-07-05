@@ -589,6 +589,16 @@ def test_system_effective_zone_setpoints_fall_back_to_status(
         "heat_set_point": 74.0,
         "cool_set_point": 78.0,
     }
+
+
+def test_system_effective_zone_setpoints_raises_for_missing_zone(
+    system_response: dict[str, Any],
+    energy_response: dict[str, Any],
+) -> None:
+    """Raise ValueError when the requested zone id does not exist."""
+    raw_system = deepcopy(system_response["infinitySystems"][0])
+    system = _system_from_raw(raw_system, energy_response)
+
     with pytest.raises(ValueError, match="zone_id: missing not found"):
         system.effective_zone_setpoints("missing")
 
