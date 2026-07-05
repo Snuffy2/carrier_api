@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Any
+import warnings
 
 from dateutil.parser import isoparse
 
@@ -82,10 +83,99 @@ class StatusZone:
         self.fan: FanModes = FanModes(status_zone_json["fan"])
         self.hold: bool = safely_get_json_value(status_zone_json, "hold") == "on"
         self.hold_until: str = safely_get_json_value(status_zone_json, "otmr")
-        self.heat_set_point: float = safely_get_json_value(status_zone_json, "htsp", float)
-        self.cool_set_point: float = safely_get_json_value(status_zone_json, "clsp", float)
+        self._heat_set_point: float = safely_get_json_value(status_zone_json, "htsp", float)
+        self._cool_set_point: float = safely_get_json_value(status_zone_json, "clsp", float)
+        status_level_stale_for_activity = bool(
+            status_zone_json.get("_setpointsStaleForActivity", False)
+        )
+        self._setpoints_stale_for_activity_heat: bool = bool(
+            status_zone_json.get("_setpointsStaleForActivityHeat", status_level_stale_for_activity)
+        )
+        self._setpoints_stale_for_activity_cool: bool = bool(
+            status_zone_json.get("_setpointsStaleForActivityCool", status_level_stale_for_activity)
+        )
         self.conditioning: str = safely_get_json_value(status_zone_json, "zoneconditioning")
         self.damper_position: int = safely_get_json_value(status_zone_json, "damperposition", int)
+
+    @property
+    @warnings.deprecated(
+        "Use System.effective_zone_setpoints(zone_id) for target temperatures.",
+        category=DeprecationWarning,
+    )
+    def heat_set_point(self) -> float:
+        """Return Carrier's raw status heat set point.
+
+        Deprecated:
+            Use ``System.effective_zone_setpoints(zone_id)`` for resolved target
+            temperatures. Access ``_heat_set_point`` only for raw status values.
+
+        Returns:
+            Carrier's raw status heat set point.
+        """
+        return self._heat_set_point
+
+    @heat_set_point.setter
+    @warnings.deprecated(
+        "Use System.effective_zone_setpoints(zone_id) for target temperatures.",
+        category=DeprecationWarning,
+    )
+    def heat_set_point(self, value: float) -> None:
+        """Set Carrier's raw status heat set point through the deprecated alias.
+
+        Args:
+            value: Raw heat set point to store.
+        """
+        self._heat_set_point = value
+
+    @property
+    @warnings.deprecated(
+        "Use System.effective_zone_setpoints(zone_id) for target temperatures.",
+        category=DeprecationWarning,
+    )
+    def cool_set_point(self) -> float:
+        """Return Carrier's raw status cool set point.
+
+        Deprecated:
+            Use ``System.effective_zone_setpoints(zone_id)`` for resolved target
+            temperatures. Access ``_cool_set_point`` only for raw status values.
+
+        Returns:
+            Carrier's raw status cool set point.
+        """
+        return self._cool_set_point
+
+    @cool_set_point.setter
+    @warnings.deprecated(
+        "Use System.effective_zone_setpoints(zone_id) for target temperatures.",
+        category=DeprecationWarning,
+    )
+    def cool_set_point(self, value: float) -> None:
+        """Set Carrier's raw status cool set point through the deprecated alias.
+
+        Args:
+            value: Raw cool set point to store.
+        """
+        self._cool_set_point = value
+
+    @property
+    def setpoints_stale_for_activity(self) -> bool:
+        """Return whether activity changed without raw status set points.
+
+        Returns:
+            ``True`` when the latest status update changed activity but omitted
+            raw heat and cool set points.
+        """
+        return self._setpoints_stale_for_activity_heat or self._setpoints_stale_for_activity_cool
+
+    @property
+    def setpoints_stale_for_activity_heat(self) -> bool:
+        """Return whether heat set point is stale for the current status activity."""
+        return self._setpoints_stale_for_activity_heat
+
+    @property
+    def setpoints_stale_for_activity_cool(self) -> bool:
+        """Return whether cool set point is stale for the current status activity."""
+        return self._setpoints_stale_for_activity_cool
 
     @property
     def current_activity(self) -> ActivityTypes:
@@ -153,8 +243,8 @@ class StatusZone:
             "hold": self.hold,
             "occupancy": self.occupancy,
             "hold_until": self.hold_until,
-            "heat_set_point": self.heat_set_point,
-            "cool_set_point": self.cool_set_point,
+            "heat_set_point": self._heat_set_point,
+            "cool_set_point": self._cool_set_point,
             "conditioning": self.conditioning,
         }
 

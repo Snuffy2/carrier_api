@@ -1,7 +1,7 @@
 """Aggregate model for a Carrier system and its related state."""
 
 from logging import getLogger
-from typing import Any
+from typing import Any, TypedDict
 
 from .config import Config
 from .energy import Energy
@@ -13,6 +13,13 @@ _LOGGER = getLogger(__name__)
 HEAT_CAPABILITY_FIELDS = ("electric_heat", "gas", "hp_heat", "loop_pump", "reheat")
 COOL_CAPABILITY_FIELDS = ("cooling", "loop_pump")
 FAN_CAPABILITY_FIELDS = ("fan", "fan_gas")
+
+
+class ZoneSetPoints(TypedDict):
+    """Effective heat and cool set points for a Carrier zone."""
+
+    heat_set_point: float
+    cool_set_point: float
 
 
 class System:
@@ -95,6 +102,57 @@ class System:
             "heat": self.supports_heat(),
             "cool": self.supports_cool(),
             "fan": self.supports_fan(),
+        }
+
+    def effective_zone_setpoints(self, zone_id: str) -> ZoneSetPoints:
+        """Return zone target set points with manual-activity config resolution.
+
+        Raw status set points are used unless a websocket update marked them
+        stale for Carrier's reported current activity. Stale status set points
+        are resolved from the matching config activity when available.
+
+        Args:
+            zone_id: Carrier zone ID to inspect.
+
+        Returns:
+            Heat and cool target set points for the zone.
+
+        Raises:
+            ValueError: If no enabled status zone has the requested ID.
+        """
+        status_zone = next(
+            (zone for zone in self.status.zones if str(zone.api_id) == str(zone_id)),
+            None,
+        )
+        if status_zone is None:
+            raise ValueError(f"zone_id: {zone_id} not found")
+
+        config_zone = next(
+            (zone for zone in self.config.zones if str(zone.api_id) == str(zone_id)),
+            None,
+        )
+        setpoint_source = (
+            config_zone.current_status_activity(status_zone) if config_zone is not None else None
+        )
+        if setpoint_source is None:
+            status_zone_data = status_zone.as_dict()
+            return {
+                "heat_set_point": status_zone_data["heat_set_point"],
+                "cool_set_point": status_zone_data["cool_set_point"],
+            }
+
+        status_zone_data = status_zone.as_dict()
+        return {
+            "heat_set_point": (
+                setpoint_source.heat_set_point
+                if status_zone.setpoints_stale_for_activity_heat
+                else status_zone_data["heat_set_point"]
+            ),
+            "cool_set_point": (
+                setpoint_source.cool_set_point
+                if status_zone.setpoints_stale_for_activity_cool
+                else status_zone_data["cool_set_point"]
+            ),
         }
 
     def _supports_any_energy_capability(self, capability_fields: tuple[str, ...]) -> bool:

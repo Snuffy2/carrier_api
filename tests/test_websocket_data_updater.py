@@ -257,16 +257,16 @@ async def test_status_zone_activity_message_handler(
         websocket_message_str: Raw zone activity websocket message fixture.
     """
     assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.WAKE
-    assert carrier_system.status.zones[0].heat_set_point == 74
-    assert carrier_system.status.zones[0].cool_set_point == 78
+    assert carrier_system.status.zones[0]._heat_set_point == 74
+    assert carrier_system.status.zones[0]._cool_set_point == 78
     await data_updater.message_handler(websocket_message_str)
     assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.HOME
-    assert carrier_system.status.zones[0].heat_set_point == 77
-    assert carrier_system.status.zones[0].cool_set_point == 79
+    assert carrier_system.status.zones[0]._heat_set_point == 77
+    assert carrier_system.status.zones[0]._cool_set_point == 79
     reprocessed_status = Status(raw=carrier_system.status.raw)
     assert reprocessed_status.zones[0].current_status_activity_type == ActivityTypes.HOME
-    assert reprocessed_status.zones[0].heat_set_point == 77
-    assert reprocessed_status.zones[0].cool_set_point == 79
+    assert reprocessed_status.zones[0]._heat_set_point == 77
+    assert reprocessed_status.zones[0]._cool_set_point == 79
 
 
 @pytest.mark.asyncio
@@ -330,14 +330,332 @@ async def test_status_zone_htsp_message_handler(
         carrier_system: Prepared system model that receives the update.
         websocket_message_str: Raw zone set point websocket message fixture.
     """
-    assert carrier_system.status.zones[0].heat_set_point == 74
-    assert carrier_system.status.zones[0].cool_set_point == 78
+    assert carrier_system.status.zones[0]._heat_set_point == 74
+    assert carrier_system.status.zones[0]._cool_set_point == 78
     await data_updater.message_handler(websocket_message_str)
-    assert carrier_system.status.zones[0].heat_set_point == 72
-    assert carrier_system.status.zones[0].cool_set_point == 85
+    assert carrier_system.status.zones[0]._heat_set_point == 72
+    assert carrier_system.status.zones[0]._cool_set_point == 85
     reprocessed_status = Status(raw=carrier_system.status.raw)
-    assert reprocessed_status.zones[0].heat_set_point == 72
-    assert reprocessed_status.zones[0].cool_set_point == 85
+    assert reprocessed_status.zones[0]._heat_set_point == 72
+    assert reprocessed_status.zones[0]._cool_set_point == 85
+
+
+@pytest.mark.asyncio
+async def test_status_zone_activity_only_status_transition_preserves_config_setpoints(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Apply setpoint-only and activity-only updates without regressing activity updates."""
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 74.0,
+        "cool_set_point": 78.0,
+    }
+
+    setpoint_message = (FIXTURE_ROOT / "messages/status_zone_htsp.json").read_text()
+    activity_message = json.loads(
+        (FIXTURE_ROOT / "messages/status_zone_activity_only.json").read_text()
+    )
+
+    await data_updater.message_handler(setpoint_message)
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 72.0,
+        "cool_set_point": 85.0,
+    }
+
+    activity_message["zones"][0]["currentActivity"] = "wake"
+    await data_updater.message_handler(json.dumps(activity_message))
+    assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.WAKE
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 72.0,
+        "cool_set_point": 85.0,
+    }
+    assert not carrier_system.status.zones[0].setpoints_stale_for_activity
+
+    activity_message["zones"][0]["currentActivity"] = "home"
+    await data_updater.message_handler(json.dumps(activity_message))
+    assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.HOME
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 77.0,
+        "cool_set_point": 79.0,
+    }
+    assert carrier_system.status.zones[0].setpoints_stale_for_activity
+
+
+@pytest.mark.asyncio
+async def test_status_zone_partial_setpoint_update_keeps_fresh_omitted_target(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Apply one-field status deltas without staling already-fresh raw targets."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": "1",
+                        "htsp": 72,
+                    }
+                ],
+                "timestamp": "2025-03-29T01:09:00.000Z",
+            }
+        )
+    )
+
+    assert not carrier_system.status.zones[0].setpoints_stale_for_activity
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 72.0,
+        "cool_set_point": 78.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_status_zone_partial_setpoint_update_resolves_missing_target_from_config(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Resolve one-field status setpoint deltas using stale config activity targets."""
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 74.0,
+        "cool_set_point": 78.0,
+    }
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": "1",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "wake",
+                                "htsp": 70,
+                                "clsp": 76,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    assert carrier_system.status.zones[0].setpoints_stale_for_activity
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": "1",
+                        "currentActivity": "wake",
+                        "htsp": 72,
+                    }
+                ],
+                "timestamp": "2025-03-29T01:10:00.000Z",
+            }
+        )
+    )
+    assert carrier_system.status.zones[0].setpoints_stale_for_activity
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 72.0,
+        "cool_set_point": 76.0,
+    }
+    assert carrier_system.status.zones[0]._cool_set_point == 78.0
+
+
+@pytest.mark.asyncio
+async def test_status_zone_partial_setpoint_update_marks_omitted_target_stale_on_activity_change(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Treat a one-target status delta as stale for the omitted target after activity change."""
+    assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.WAKE
+    away_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.AWAY)
+    assert away_activity is not None
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": "1",
+                        "currentActivity": "away",
+                        "htsp": 72,
+                    }
+                ],
+                "timestamp": "2025-03-29T01:12:00.000Z",
+            }
+        )
+    )
+
+    zone = carrier_system.status.zones[0]
+    assert zone.current_status_activity_type == ActivityTypes.AWAY
+    assert zone._heat_set_point == 72.0
+    assert zone._cool_set_point == 78.0
+    assert zone.setpoints_stale_for_activity_heat is False
+    assert zone.setpoints_stale_for_activity_cool is True
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 72.0,
+        "cool_set_point": away_activity.cool_set_point,
+    }
+
+
+@pytest.mark.asyncio
+async def test_config_zone_activity_update_for_status_activity_marks_stale_setpoints(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Use stale config activity updates to refresh effective setpoints without status setpoints."""
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 74.0,
+        "cool_set_point": 78.0,
+    }
+    assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.WAKE
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": "1",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "type": "wake",
+                                "htsp": 70,
+                                "clsp": 76,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    assert carrier_system.status.zones[0].setpoints_stale_for_activity
+    away_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.AWAY)
+    wake_activity = carrier_system.config.zones[0].find_activity(ActivityTypes.WAKE)
+    assert away_activity is not None
+    assert wake_activity is not None
+    assert away_activity.heat_set_point == 68.0
+    assert wake_activity.heat_set_point == 70.0
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 70.0,
+        "cool_set_point": 76.0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_config_zone_activity_update_without_type_marks_stale_setpoints(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Match config activity updates without type by resolving the update by id."""
+    assert not carrier_system.status.zones[0].setpoints_stale_for_activity
+    assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.WAKE
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": "1",
+                        "currentActivity": "away",
+                        "htsp": 60.0,
+                        "clsp": 80.0,
+                    }
+                ],
+                "timestamp": "2025-03-29T01:11:00.000Z",
+            }
+        )
+    )
+    assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.AWAY
+    assert not carrier_system.status.zones[0].setpoints_stale_for_activity
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": "1",
+                        "activities": [
+                            {
+                                "id": "1",
+                                "htsp": 70,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    assert carrier_system.status.zones[0].setpoints_stale_for_activity
+    assert carrier_system.status.zones[0].setpoints_stale_for_activity_heat
+    assert not carrier_system.status.zones[0].setpoints_stale_for_activity_cool
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 70.0,
+        "cool_set_point": 80.0,
+    }
+    assert carrier_system.status.zones[0]._heat_set_point == 60.0
+    assert carrier_system.status.zones[0]._cool_set_point == 80.0
+
+
+@pytest.mark.asyncio
+async def test_config_vacation_target_update_marks_vacation_status_stale(
+    data_updater: WebsocketDataUpdater,
+    carrier_system: System,
+) -> None:
+    """Use updated vacation config targets when status reports vacation activity."""
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityStatus",
+                "deviceId": "SERIALXXX",
+                "zones": [
+                    {
+                        "id": "1",
+                        "currentActivity": "vacation",
+                        "htsp": 60.0,
+                        "clsp": 80.0,
+                    }
+                ],
+                "timestamp": "2025-03-29T01:11:00.000Z",
+            }
+        )
+    )
+    assert carrier_system.status.zones[0].current_status_activity_type == ActivityTypes.VACATION
+    assert not carrier_system.status.zones[0].setpoints_stale_for_activity
+
+    await data_updater.message_handler(
+        json.dumps(
+            {
+                "messageType": "InfinityConfig",
+                "deviceId": "SERIALXXX",
+                "vacmint": 62,
+                "vacmaxt": 82,
+            }
+        )
+    )
+
+    assert carrier_system.status.zones[0].setpoints_stale_for_activity
+    assert carrier_system.effective_zone_setpoints("1") == {
+        "heat_set_point": 62.0,
+        "cool_set_point": 82.0,
+    }
+    assert carrier_system.status.zones[0]._heat_set_point == 60.0
+    assert carrier_system.status.zones[0]._cool_set_point == 80.0
 
 
 @pytest.mark.asyncio

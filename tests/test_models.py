@@ -290,6 +290,20 @@ def test_status_modes_zone_conditioning_and_serialization(
         _ = unknown_status.mode_const
 
 
+def test_status_zone_set_point_properties_are_deprecated(
+    system_response: dict[str, Any],
+) -> None:
+    """Warn callers to use raw private fields or effective system set points."""
+    zone = Status(system_response["infinitySystems"][0]["status"]).zones[0]
+
+    assert zone._heat_set_point == 74
+    assert zone._cool_set_point == 78
+    with pytest.deprecated_call(match="System.effective_zone_setpoints"):
+        assert zone.heat_set_point == 74
+    with pytest.deprecated_call(match="System.effective_zone_setpoints"):
+        assert zone.cool_set_point == 78
+
+
 def test_config_schedule_branches_and_serialization(system_response: dict[str, Any]) -> None:
     """Cover config activity lookup, schedule branches, and serialization.
 
@@ -487,6 +501,124 @@ def test_system_as_dict_uses_nested_model_dictionaries(
         system.as_dict()["config"]["zones"][0]["current_activity"]["from_status"]["type"] == "wake"
     )
     assert repr(system) == str(system.as_dict())
+
+
+def _system_from_raw(
+    raw_system: dict[str, Any],
+    energy_response: dict[str, Any],
+) -> System:
+    """Build a System aggregate from raw system and energy payload slices."""
+    return System(
+        Profile(raw_system["profile"]),
+        Status(raw_system["status"]),
+        Config(raw_system["config"]),
+        Energy(energy_response["infinityEnergy"]),
+    )
+
+
+def test_system_effective_zone_setpoints_use_status_resolved_config_activity(
+    system_response: dict[str, Any],
+    energy_response: dict[str, Any],
+) -> None:
+    """Read effective targets from fresh status values for a manual activity."""
+    raw_system = deepcopy(system_response["infinitySystems"][0])
+    raw_system["status"]["zones"][0]["currentActivity"] = "manual"
+    raw_system["status"]["zones"][0]["htsp"] = "70"
+    raw_system["status"]["zones"][0]["clsp"] = "80"
+    manual_activity = next(
+        activity
+        for activity in raw_system["config"]["zones"][0]["activities"]
+        if activity["type"] == "manual"
+    )
+    manual_activity["htsp"] = "66"
+    manual_activity["clsp"] = "76"
+    system = _system_from_raw(raw_system, energy_response)
+
+    assert system.effective_zone_setpoints("1") == {
+        "heat_set_point": 70.0,
+        "cool_set_point": 80.0,
+    }
+
+
+def test_system_effective_zone_setpoints_prefers_fresh_status_when_matching_other_activity(
+    system_response: dict[str, Any],
+    energy_response: dict[str, Any],
+) -> None:
+    """Use raw status targets when they are fresh and match another activity profile."""
+    raw_system = deepcopy(system_response["infinitySystems"][0])
+    status_zone = raw_system["status"]["zones"][0]
+    status_zone["currentActivity"] = "wake"
+    status_zone["htsp"] = "77"
+    status_zone["clsp"] = "79"
+    status_zone["_setpointsStaleForActivityHeat"] = False
+    status_zone["_setpointsStaleForActivityCool"] = False
+    wake_activity = next(
+        activity
+        for activity in raw_system["config"]["zones"][0]["activities"]
+        if activity["type"] == "wake"
+    )
+    home_activity = next(
+        activity
+        for activity in raw_system["config"]["zones"][0]["activities"]
+        if activity["type"] == "home"
+    )
+    system = _system_from_raw(raw_system, energy_response)
+
+    assert (wake_activity["htsp"], wake_activity["clsp"]) == ("74", "78")
+    assert (home_activity["htsp"], home_activity["clsp"]) == ("77", "79")
+    assert system.effective_zone_setpoints("1") == {
+        "heat_set_point": 77.0,
+        "cool_set_point": 79.0,
+    }
+
+
+def test_system_effective_zone_setpoints_fall_back_to_status(
+    system_response: dict[str, Any],
+    energy_response: dict[str, Any],
+) -> None:
+    """Use raw status targets when no matching config activity is available."""
+    raw_system = deepcopy(system_response["infinitySystems"][0])
+    raw_system["config"]["zones"][0]["activities"] = [
+        activity
+        for activity in raw_system["config"]["zones"][0]["activities"]
+        if activity["type"] != raw_system["status"]["zones"][0]["currentActivity"]
+    ]
+    system = _system_from_raw(raw_system, energy_response)
+
+    assert system.effective_zone_setpoints("1") == {
+        "heat_set_point": 74.0,
+        "cool_set_point": 78.0,
+    }
+
+
+def test_system_effective_zone_setpoints_raises_for_missing_zone(
+    system_response: dict[str, Any],
+    energy_response: dict[str, Any],
+) -> None:
+    """Raise ValueError when the requested zone id does not exist."""
+    raw_system = deepcopy(system_response["infinitySystems"][0])
+    system = _system_from_raw(raw_system, energy_response)
+
+    with pytest.raises(ValueError, match="zone_id: missing not found"):
+        system.effective_zone_setpoints("missing")
+
+
+def test_system_effective_zone_setpoints_prefers_config_for_activity_only_status_update(
+    system_response: dict[str, Any],
+    energy_response: dict[str, Any],
+) -> None:
+    """Favor config activity when stale status setpoints are expected."""
+    raw_system = deepcopy(system_response["infinitySystems"][0])
+    raw_system["status"]["zones"][0]["currentActivity"] = "home"
+    raw_system["status"]["zones"][0]["htsp"] = "74"
+    raw_system["status"]["zones"][0]["clsp"] = "78"
+    raw_system["status"]["zones"][0]["_setpointsStaleForActivity"] = True
+    system = _system_from_raw(raw_system, energy_response)
+
+    assert system.effective_zone_setpoints("1") == {
+        "heat_set_point": 77.0,
+        "cool_set_point": 79.0,
+    }
 
 
 def test_system_reports_supported_hvac_capabilities_from_equipment_and_config(

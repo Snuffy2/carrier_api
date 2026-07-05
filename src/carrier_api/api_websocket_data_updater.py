@@ -7,8 +7,10 @@ from logging import getLogger
 from deepmerge import always_merger
 
 from .config import Config
+from .const import ActivityTypes
 from .status import Status
 from .system import System
+from .util import safely_get_json_value
 
 _LOGGER = getLogger(__name__)
 
@@ -94,6 +96,41 @@ class WebsocketDataUpdater:
                 for zone in zones:
                     _timestamp = zone.pop("timestamp", None)
                     stale_zone = find_by_id(system.status.raw["zones"], zone["id"])
+                    stale_heat = bool(
+                        stale_zone.get(
+                            "_setpointsStaleForActivityHeat",
+                            stale_zone.get("_setpointsStaleForActivity", False),
+                        )
+                    )
+                    stale_cool = bool(
+                        stale_zone.get(
+                            "_setpointsStaleForActivityCool",
+                            stale_zone.get("_setpointsStaleForActivity", False),
+                        )
+                    )
+                    has_heat_set_point = "htsp" in zone
+                    has_cool_set_point = "clsp" in zone
+                    incoming_activity_changed = "currentActivity" in zone and zone[
+                        "currentActivity"
+                    ] != stale_zone.get("currentActivity")
+                    if has_heat_set_point or has_cool_set_point:
+                        if has_heat_set_point:
+                            stale_heat = False
+                        elif incoming_activity_changed:
+                            stale_heat = True
+                        if has_cool_set_point:
+                            stale_cool = False
+                        elif incoming_activity_changed:
+                            stale_cool = True
+                        stale_zone["_setpointsStaleForActivityHeat"] = stale_heat
+                        stale_zone["_setpointsStaleForActivityCool"] = stale_cool
+                        stale_zone["_setpointsStaleForActivity"] = stale_heat or stale_cool
+                    elif incoming_activity_changed:
+                        stale_heat = True
+                        stale_cool = True
+                        stale_zone["_setpointsStaleForActivityHeat"] = stale_heat
+                        stale_zone["_setpointsStaleForActivityCool"] = stale_cool
+                        stale_zone["_setpointsStaleForActivity"] = stale_heat or stale_cool
                     always_merger.merge(stale_zone, zone)
                 merged_status = always_merger.merge(system.status.raw, websocket_message_json)
                 merged_status.update({"utcTime": datetime.now(UTC).isoformat()})
@@ -103,21 +140,90 @@ class WebsocketDataUpdater:
                 _config_id = websocket_message_json.pop("infinitySystemConfigurationId", None)
                 _LOGGER.debug("InfinityConfig received: %s", websocket_message)
                 zones = websocket_message_json.pop("zones", [])
+                status_zone_by_id = {
+                    str(status_zone["id"]): status_zone
+                    for status_zone in system.status.raw["zones"]
+                }
+                vacation_heat_target_changed = (
+                    "vacmint" in websocket_message_json
+                    and safely_get_json_value(websocket_message_json, "vacmint", float)
+                    != safely_get_json_value(system.config.raw, "vacmint", float)
+                )
+                vacation_cool_target_changed = (
+                    "vacmaxt" in websocket_message_json
+                    and safely_get_json_value(websocket_message_json, "vacmaxt", float)
+                    != safely_get_json_value(system.config.raw, "vacmaxt", float)
+                )
+                if vacation_heat_target_changed or vacation_cool_target_changed:
+                    for status_zone in status_zone_by_id.values():
+                        if status_zone.get("currentActivity") == ActivityTypes.VACATION.value:
+                            if vacation_heat_target_changed:
+                                status_zone["_setpointsStaleForActivityHeat"] = True
+                            if vacation_cool_target_changed:
+                                status_zone["_setpointsStaleForActivityCool"] = True
+                            status_zone["_setpointsStaleForActivity"] = bool(
+                                status_zone.get("_setpointsStaleForActivityHeat", False)
+                                or status_zone.get("_setpointsStaleForActivityCool", False)
+                            )
                 for zone in zones:
                     _timestamp = zone.pop("timestamp", None)
                     if "id" in zone:
                         zone_id = zone["id"]
                         stale_zone = find_by_id(system.config.raw["zones"], zone_id)
+                        status_zone = status_zone_by_id.get(str(zone_id))
                         activities = zone.pop("activities", [])
                         for activity in activities:
                             _timestamp = activity.pop("timestamp", None)
                             _zone_configuration_id = activity.pop("zoneConfigurationId", None)
                             _fan_setting_id = activity.pop("fanSettingId", None)
-                            stale_activity = find_by_id(stale_zone["activities"], activity["id"])
+                            incoming_activity = activity.get("type")
+                            stale_activity = (
+                                next(
+                                    (
+                                        stale_activity
+                                        for stale_activity in stale_zone["activities"]
+                                        if stale_activity.get("type") == incoming_activity
+                                    ),
+                                    None,
+                                )
+                                if incoming_activity is not None
+                                else find_by_id(stale_zone["activities"], activity["id"])
+                            )
                             if stale_activity is not None:
+                                activity_heat_target_changed = (
+                                    "htsp" in activity
+                                    and safely_get_json_value(activity, "htsp", float)
+                                    != safely_get_json_value(stale_activity, "htsp", float)
+                                )
+                                activity_cool_target_changed = (
+                                    "clsp" in activity
+                                    and safely_get_json_value(activity, "clsp", float)
+                                    != safely_get_json_value(stale_activity, "clsp", float)
+                                )
+                                incoming_activity_or_type = (
+                                    incoming_activity
+                                    or safely_get_json_value(stale_activity, "type")
+                                )
+                                if (
+                                    status_zone is not None
+                                    and status_zone.get("currentActivity")
+                                    == incoming_activity_or_type
+                                    and (
+                                        activity_heat_target_changed or activity_cool_target_changed
+                                    )
+                                ):
+                                    if activity_heat_target_changed:
+                                        status_zone["_setpointsStaleForActivityHeat"] = True
+                                    if activity_cool_target_changed:
+                                        status_zone["_setpointsStaleForActivityCool"] = True
+                                    status_zone["_setpointsStaleForActivity"] = bool(
+                                        status_zone.get("_setpointsStaleForActivityHeat", False)
+                                        or status_zone.get("_setpointsStaleForActivityCool", False)
+                                    )
                                 always_merger.merge(stale_activity, activity)
                         always_merger.merge(stale_zone, zone)
                 always_merger.merge(system.config.raw, websocket_message_json)
                 system.config = Config(system.config.raw)
+                system.status = Status(system.status.raw)
             case _:
                 _LOGGER.error("Received unknown message: %s", websocket_message)
