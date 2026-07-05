@@ -98,15 +98,12 @@ class WebsocketDataUpdater:
                     incoming_activity_only = (
                         "currentActivity" in zone and "htsp" not in zone and "clsp" not in zone
                     )
-                    if "currentActivity" in zone:
-                        if incoming_activity_only and zone["currentActivity"] != stale_zone.get(
-                            "currentActivity"
-                        ):
-                            stale_zone["_setpointsStaleForActivity"] = True
-                        elif "htsp" in zone or "clsp" in zone:
-                            stale_zone["_setpointsStaleForActivity"] = False
-                    elif "htsp" in zone or "clsp" in zone:
+                    if "htsp" in zone or "clsp" in zone:
                         stale_zone["_setpointsStaleForActivity"] = False
+                    elif incoming_activity_only and zone["currentActivity"] != stale_zone.get(
+                        "currentActivity"
+                    ):
+                        stale_zone["_setpointsStaleForActivity"] = True
                     always_merger.merge(stale_zone, zone)
                 merged_status = always_merger.merge(system.status.raw, websocket_message_json)
                 merged_status.update({"utcTime": datetime.now(UTC).isoformat()})
