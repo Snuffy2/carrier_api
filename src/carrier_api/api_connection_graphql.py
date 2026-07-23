@@ -35,6 +35,51 @@ GRAPHQL_EXECUTE_TIMEOUT_SECONDS = 60
 _CONNECTION_ERRORS = (GraphqlTransportError, ClientError, TimeoutError, OSError)
 _AUTH_HTTP_STATUSES = {401, 403}
 
+_INFINITY_STATUS_FRAGMENT = """
+fragment InfinityStatusFields on InfinityStatus {
+  localTime
+  localTimeOffset
+  utcTime
+  wcTime
+  isDisconnected
+  cfgem
+  mode
+  vacatrunning
+  oat
+  odu {
+    type
+    opstat
+    iducfm
+  }
+  filtrlvl
+  idu {
+    type
+    opstat
+    cfm
+    statpress
+    blwrpm
+  }
+  vent
+  ventlvl
+  humid
+  humlvl
+  uvlvl
+  zones {
+    id
+    rt
+    rh
+    fan
+    htsp
+    clsp
+    hold
+    enabled
+    currentActivity
+    zoneconditioning
+    damperposition
+  }
+}
+"""
+
 
 def _is_auth_transport_error(error: BaseException) -> bool:
     """Return whether a transport error represents Carrier auth rejection.
@@ -352,45 +397,7 @@ class ApiConnectionGraphql:
                   odutype
                 }
                 status {
-                  localTime
-                  localTimeOffset
-                  utcTime
-                  wcTime
-                  isDisconnected
-                  cfgem
-                  mode
-                  vacatrunning
-                  oat
-                  odu {
-                    type
-                    opstat
-                    iducfm
-                  }
-                  filtrlvl
-                  idu {
-                    type
-                    opstat
-                    cfm
-                    statpress
-                    blwrpm
-                  }
-                  vent
-                  ventlvl
-                  humid
-                  humlvl
-                  uvlvl
-                  zones {
-                    id
-                    rt
-                    rh
-                    fan
-                    htsp
-                    clsp
-                    hold
-                    enabled
-                    currentActivity
-                    zoneconditioning
-                  }
+                  ...InfinityStatusFields
                 }
                 config {
                   etag
@@ -474,11 +481,73 @@ class ApiConnectionGraphql:
               }
             }
             """
+            + _INFINITY_STATUS_FRAGMENT
         )
         variable_values = {"userName": self.username}
         return await self.authed_query(
             operation_name=operation_name, query=query, variable_values=variable_values
         )
+
+    async def get_system_statuses(self) -> dict[str, Any]:
+        """Fetch authoritative runtime status for configured Infinity systems.
+
+        This lightweight query omits profile details, configuration, and energy
+        data so consumers can periodically correct silently stale websocket
+        state without performing a complete account refresh.
+
+        Returns:
+            The decoded ``getInfinitySystemStatuses`` GraphQL response data
+            containing each system serial and current status payload.
+        """
+        operation_name = "getInfinitySystemStatuses"
+        query = gql(
+            """
+            query getInfinitySystemStatuses($userName: String!) {
+              infinitySystems(userName: $userName) {
+                profile {
+                  serial
+                }
+                status {
+                  ...InfinityStatusFields
+                }
+              }
+            }
+            """
+            + _INFINITY_STATUS_FRAGMENT
+        )
+        variable_values = {"userName": self.username}
+        return await self.authed_query(
+            operation_name=operation_name, query=query, variable_values=variable_values
+        )
+
+    async def refresh_system_statuses(self, systems: list[System]) -> set[str]:
+        """Replace tracked system statuses from an authoritative GraphQL snapshot.
+
+        Existing ``System`` objects and their profile, configuration, and energy
+        models remain in place so callers can retain entity and websocket
+        references. Systems absent from the response are left untouched, and
+        response entries unknown to the caller are ignored because account
+        topology remains the responsibility of a complete data refresh.
+
+        Args:
+            systems: Existing system aggregates to refresh in place.
+
+        Returns:
+            Serials of the systems whose status was refreshed.
+        """
+        response = await self.get_system_statuses()
+        status_by_serial = {
+            str(system_response["profile"]["serial"]): system_response["status"]
+            for system_response in response["infinitySystems"]
+        }
+        refreshed_serials: set[str] = set()
+        for system in systems:
+            fresh_status = status_by_serial.get(system.profile.serial)
+            if fresh_status is None:
+                continue
+            system.status = Status(raw=fresh_status)
+            refreshed_serials.add(system.profile.serial)
+        return refreshed_serials
 
     async def get_energy(self, system_serial: str) -> dict[str, Any]:
         """Fetch energy configuration and usage for a Carrier system.

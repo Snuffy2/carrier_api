@@ -1,11 +1,13 @@
 """Tests for Carrier GraphQL API connection helpers."""
 
+from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from typing import Any, Self, cast
 
 from aiohttp import ClientConnectionError, ClientError, ClientResponseError, ClientSession
 from gql import GraphQLRequest, gql
 from gql.transport.exceptions import TransportQueryError, TransportServerError
+from graphql import print_ast
 import pytest
 
 import carrier_api
@@ -894,6 +896,10 @@ async def test_query_helpers_send_expected_operation_and_variables(
         "operation": "getInfinitySystems",
         "variables": {"userName": "user@example.com"},
     }
+    assert await connection.get_system_statuses() == {
+        "operation": "getInfinitySystemStatuses",
+        "variables": {"userName": "user@example.com"},
+    }
     assert await connection.get_energy("SERIAL") == {
         "operation": "getInfinityEnergy",
         "variables": {"serial": "SERIAL"},
@@ -902,8 +908,59 @@ async def test_query_helpers_send_expected_operation_and_variables(
     assert connection.authed_calls == [
         ("getUser", {"userName": "user@example.com"}),
         ("getInfinitySystems", {"userName": "user@example.com"}),
+        ("getInfinitySystemStatuses", {"userName": "user@example.com"}),
         ("getInfinityEnergy", {"serial": "SERIAL"}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_system_status_query_is_lightweight_and_shares_full_status_fields() -> None:
+    """Keep full and status-only queries aligned without loading config or energy."""
+
+    class QueryCaptureConnection(SpyConnection):
+        """Connection that captures the most recent authenticated query."""
+
+        def __init__(self) -> None:
+            """Initialize query capture state."""
+            super().__init__()
+            self.captured_query: GraphQLRequest | None = None
+
+        async def authed_query(
+            self,
+            operation_name: str,
+            query: GraphQLRequest,
+            variable_values: dict[str, Any],
+        ) -> dict[str, Any]:
+            """Capture a query and return an empty systems response.
+
+            Args:
+                operation_name: GraphQL operation name.
+                query: Parsed GraphQL request.
+                variable_values: GraphQL variables.
+
+            Returns:
+                Empty Infinity systems response.
+            """
+            self.captured_query = query
+            return {"infinitySystems": []}
+
+    connection = QueryCaptureConnection()
+    await connection.get_system_statuses()
+    assert connection.captured_query is not None
+    status_query = print_ast(connection.captured_query.document)
+
+    assert "query getInfinitySystemStatuses" in status_query
+    assert "fragment InfinityStatusFields on InfinityStatus" in status_query
+    assert "zoneconditioning" in status_query
+    assert "damperposition" in status_query
+    assert "config {" not in status_query
+    assert "energy" not in status_query.lower()
+
+    await connection.get_systems()
+    assert connection.captured_query is not None
+    full_query = print_ast(connection.captured_query.document)
+    assert "fragment InfinityStatusFields on InfinityStatus" in full_query
+    assert "damperposition" in full_query
 
 
 @pytest.mark.asyncio
@@ -912,6 +969,8 @@ async def test_query_helpers_send_expected_operation_and_variables(
     [
         ("get_user_info", TimeoutError("get user timed out")),
         ("get_user_info", OSError("get user socket failed")),
+        ("get_system_statuses", TimeoutError("get statuses timed out")),
+        ("get_system_statuses", OSError("get statuses socket failed")),
         ("load_data", TimeoutError("load data timed out")),
         ("load_data", OSError("load data socket failed")),
     ],
@@ -988,6 +1047,109 @@ async def test_load_data_builds_systems_from_query_payloads(
     assert isinstance(systems[0], System)
     assert systems[0].profile.serial == "SERIALXXX"
     assert systems[0].energy.current_year_measurements() is not None
+
+
+@pytest.mark.asyncio
+async def test_refresh_system_statuses_updates_matching_systems_in_place(
+    systems: list[System],
+    system_response: dict[str, Any],
+) -> None:
+    """Refresh matching statuses while preserving aggregates and unrelated models.
+
+    Args:
+        systems: Fixture-backed system aggregates.
+        system_response: Stored systems GraphQL response fixture.
+    """
+    primary = systems[0]
+    secondary = deepcopy(primary)
+    secondary.profile.serial = "SERIALYYY"
+    missing = deepcopy(primary)
+    missing.profile.serial = "SERIALMISSING"
+    tracked_systems = [primary, secondary, missing]
+
+    primary_status = deepcopy(system_response["infinitySystems"][0]["status"])
+    primary_status["zones"][0]["zoneconditioning"] = "active_cool"
+    primary_status["zones"][0]["damperposition"] = "42"
+    secondary_status = deepcopy(system_response["infinitySystems"][0]["status"])
+    secondary_status["zones"][0]["zoneconditioning"] = "idle"
+    unknown_status = deepcopy(system_response["infinitySystems"][0]["status"])
+
+    status_response = {
+        "infinitySystems": [
+            {"profile": {"serial": "SERIALYYY"}, "status": secondary_status},
+            {"profile": {"serial": "UNKNOWN"}, "status": unknown_status},
+            {"profile": {"serial": "SERIALXXX"}, "status": primary_status},
+        ]
+    }
+
+    class FixtureStatusConnection(SpyConnection):
+        """Connection that returns a fixture-backed status snapshot."""
+
+        async def get_system_statuses(self) -> dict[str, Any]:
+            """Return the prepared status-only response.
+
+            Returns:
+                Fixture-backed status snapshot.
+            """
+            return status_response
+
+        async def get_energy(self, system_serial: str) -> dict[str, Any]:
+            """Reject unexpected energy queries during a status refresh.
+
+            Args:
+                system_serial: Unexpected system serial.
+
+            Raises:
+                AssertionError: Always, because status refreshes must not query
+                    energy data.
+            """
+            raise AssertionError(f"unexpected energy query for {system_serial}")
+
+    original_primary = primary
+    original_primary_profile = primary.profile
+    original_primary_config = primary.config
+    original_primary_energy = primary.energy
+    original_missing_status = missing.status
+
+    refreshed = await FixtureStatusConnection().refresh_system_statuses(tracked_systems)
+
+    assert refreshed == {"SERIALXXX", "SERIALYYY"}
+    assert primary is original_primary
+    assert primary.profile is original_primary_profile
+    assert primary.config is original_primary_config
+    assert primary.energy is original_primary_energy
+    assert primary.status.zones[0].conditioning == "active_cool"
+    assert primary.status.zones[0].damper_position == 42
+    assert secondary.status.zones[0].conditioning == "idle"
+    assert missing.status is original_missing_status
+
+
+@pytest.mark.asyncio
+async def test_refresh_system_statuses_preserves_typed_query_errors(
+    systems: list[System],
+) -> None:
+    """Propagate typed failures from the status query unchanged.
+
+    Args:
+        systems: Fixture-backed system aggregates.
+    """
+    query_error = errors.CarrierApiConnectionError("status refresh failed")
+
+    class FailingStatusConnection(SpyConnection):
+        """Connection whose status-only query fails."""
+
+        async def get_system_statuses(self) -> dict[str, Any]:
+            """Raise the configured status query error.
+
+            Raises:
+                CarrierApiConnectionError: Always.
+            """
+            raise query_error
+
+    with pytest.raises(errors.CarrierApiConnectionError) as error:
+        await FailingStatusConnection().refresh_system_statuses(systems)
+
+    assert error.value is query_error
 
 
 @pytest.mark.asyncio

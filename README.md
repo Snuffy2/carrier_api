@@ -82,6 +82,12 @@ asyncio.run(main())
 - `config`: configured zones, activities, schedules, and holds
 - `energy`: reported energy usage data
 
+Use `await api.refresh_system_statuses(systems)` to periodically replace only
+the runtime status on an existing list of systems. This performs one lightweight
+account-level GraphQL query without loading configuration or energy data,
+preserves existing `System` objects, and returns the serials that were refreshed.
+Account topology changes still require `load_data()`.
+
 Model objects provide `as_dict()` for structured serialization. Their string and repr forms are intended for readable debugging output.
 
 `System` also exposes HVAC capability helpers:
